@@ -16,7 +16,8 @@ export default function Attendance() {
 
   
   const user = JSON.parse(localStorage.getItem('user'));
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+  const todayStr = format(nowIST, 'yyyy-MM-dd');
 
   const fetchAttendance = async () => {
     try {

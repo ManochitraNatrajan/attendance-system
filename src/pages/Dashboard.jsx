@@ -11,7 +11,8 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        const todayStr = format(new Date(), 'yyyy-MM-dd');
+        const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+        const todayStr = format(nowIST, 'yyyy-MM-dd');
         const [empRes, attRes] = await Promise.all([
           axios.get('/api/employees'),
           axios.get(`/api/attendance?date=${todayStr}`)

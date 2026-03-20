@@ -242,8 +242,9 @@ app.get('/api/attendance', async (req, res) => {
 app.post('/api/attendance/check-in', async (req, res) => {
   try {
     const { employeeId, latitude, longitude } = req.body;
-    const today = format(new Date(), 'yyyy-MM-dd');
-    const nowTime = format(new Date(), 'HH:mm:ss');
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
+    const nowTime = format(nowIST, 'HH:mm:ss');
     
     const existingRecord = await Attendance.findOne({ employeeId, date: today });
     if (existingRecord) {
@@ -270,7 +271,8 @@ app.post('/api/attendance/check-in', async (req, res) => {
 app.post('/api/attendance/work-details', async (req, res) => {
   try {
     const { employeeId, workDetails } = req.body;
-    const today = format(new Date(), 'yyyy-MM-dd');
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
     
     const record = await Attendance.findOneAndUpdate(
       { employeeId, date: today }, 
@@ -293,7 +295,8 @@ app.post('/api/attendance/live-location', async (req, res) => {
     const { employeeId, lat, lng } = req.body;
     if (!lat || !lng) return res.status(400).json({message: 'Invalid coords'});
     
-    const today = format(new Date(), 'yyyy-MM-dd');
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
     const record = await Attendance.findOneAndUpdate(
       { employeeId, date: today, checkOut: null },
       { currentLocation: { lat: Number(lat), lng: Number(lng), timestamp: new Date() } }
@@ -309,8 +312,9 @@ app.post('/api/attendance/live-location', async (req, res) => {
 app.post('/api/attendance/check-out', async (req, res) => {
   try {
     const { employeeId, latitude, longitude, status } = req.body;
-    const today = format(new Date(), 'yyyy-MM-dd');
-    const nowTime = format(new Date(), 'HH:mm:ss');
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
+    const nowTime = format(nowIST, 'HH:mm:ss');
     
     const record = await Attendance.findOne({ employeeId, date: today });
     if (!record) return res.status(404).json({ message: 'No check-in record found for today' });
@@ -357,7 +361,8 @@ app.get('/api/reports', async (req, res) => {
 app.get('/api/salary/:employeeId', async (req, res) => {
   try {
     const { employeeId } = req.params;
-    const targetYearMonth = req.query.month || format(new Date(), 'yyyy-MM');
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const targetYearMonth = req.query.month || format(nowIST, 'yyyy-MM');
     
     const emp = await Employee.findById(employeeId);
     if (!emp) return res.status(404).json({ message: 'Employee not found' });
