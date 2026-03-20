@@ -131,12 +131,23 @@ export default function Attendance() {
         }));
 
         try {
-          await axios.post('/api/attendance/check-in', { 
+          const res = await axios.post('/api/attendance/check-in', { 
             employeeId: user.id,
             latitude,
             longitude
           });
+          // Update todayRecord directly for instant UI update
+          setTodayRecord(res.data);
+          
+          // Re-fetch to ensure history table is updated
           fetchAttendance();
+          
+          // Auto-scroll to work details section after check-in
+          setTimeout(() => {
+            const el = document.getElementById('work-details-section');
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 500);
+
         } catch (err) {
           console.error(err);
           alert(err.response?.data?.message || 'Failed to check-in');
@@ -197,12 +208,14 @@ export default function Attendance() {
     });
 
     try {
-      await axios.post('/api/attendance/check-out', { 
+      const res = await axios.post('/api/attendance/check-out', { 
         employeeId: user.id,
         latitude: finalLat,
         longitude: finalLng,
         status: status
       });
+      // Clear todayRecord or update it to reflect check-out for the button logic
+      setTodayRecord(res.data);
       fetchAttendance();
     } catch (err) {
       console.error(err);
@@ -213,14 +226,22 @@ export default function Attendance() {
   };
 
   const handleSaveWorkDetails = async () => {
+    const filledCount = workDetails.filter(w => w.trim()).length;
+    if (filledCount < 10) {
+      const proceed = window.confirm(`Important: You have only filled ${filledCount} out of 10 required work points. Do you want to save anyway?`);
+      if (!proceed) return;
+    }
+
     setSavingDetails(true);
     try {
       await axios.post('/api/attendance/work-details', {
         employeeId: user.id,
         workDetails
       });
-      alert('10-Point Work Details saved successfully!');
+      alert('Success! Your 10-point work details have been saved and sent to the admin.');
       fetchAttendance();
+      // Optional: scroll back to top after saving
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       console.error(err);
       alert('Failed to save work details.');
@@ -304,9 +325,12 @@ export default function Attendance() {
       </div>
 
       {todayRecord && !todayRecord.checkOut && (
-        <div className="bg-white rounded-xl shadow-sm border border-[var(--accent-border)] p-6 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Today's Work Details</h2>
-          <p className="text-sm text-gray-500 mb-6">Please enter your 10 required work details for your shift today.</p>
+        <div id="work-details-section" className="bg-white rounded-xl shadow-md border-2 border-indigo-200 p-6 mb-8 ring-4 ring-indigo-50 ring-opacity-50 animate-[pulse_3s_infinite]">
+          <h2 className="text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
+            <Clock className="text-indigo-600" />
+            Shift Action Required: Today's Work Details
+          </h2>
+          <p className="text-sm text-gray-600 mb-6 font-medium">Please list exactly 10 points describing your work tasks for today below.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
             {workDetails.map((detail, idx) => (
               <div key={idx} className="flex flex-col">
