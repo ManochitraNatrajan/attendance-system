@@ -1,0 +1,15 @@
+{
+  "employees": [
+    {
+      "id": "1",
+      "name": "Admin",
+      "role": "Admin",
+      "contact": "admin@dairy.com",
+      "password": "pass",
+      "monthlySalary": "30000",
+      "dailyWage": 0
+    }
+  ],
+  "attendance": [],
+  "salaryHistory": []
+}
