@@ -74,7 +74,7 @@ export default function Employees() {
         await axios.put(`/api/employees/${currentEmployee.id}`, formData);
       } else {
         await axios.post('/api/employees', formData);
-        alert('Employee added successfully! Their unique OTP/password has been emailed to them.');
+        alert('Employee added successfully!');
       }
       fetchEmployees();
       handleCloseModal();

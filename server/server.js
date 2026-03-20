@@ -167,14 +167,13 @@ app.post('/api/employees/verify-otp', (req, res) => {
 
 app.post('/api/employees', async (req, res) => {
   try {
-    const generatedPassword = Math.floor(100000 + Math.random() * 900000).toString();
     const emp = await Employee.create({
       name: req.body.name,
       role: req.body.role,
       contact: req.body.contact,
       dailyWage: Number(req.body.dailyWage) || 0,
       monthlySalary: Number(req.body.monthlySalary) || 0,
-      password: generatedPassword,
+      password: req.body.password || '123456',
     });
     
     // Welcome email has been disabled as requested
