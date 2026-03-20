@@ -254,11 +254,14 @@ export default function SalaryModal({ employee, onClose }) {
 
                                       <button
                                         onClick={() => {
-                                          const baseUrl = axios.defaults.baseURL || '';
-                                          window.open(`${baseUrl}/api/salary/download-payslip/${record.id}`, '_blank');
+                                          const base = axios.defaults.baseURL || window.location.origin;
+                                          const cleanBase = base.endsWith('/') ? base.slice(0, -1) : base;
+                                          const downloadUrl = `${cleanBase}/api/salary/download-payslip/${record.id}`;
+                                          console.log("Initiating download from:", downloadUrl);
+                                          window.open(downloadUrl, '_blank');
                                         }}
-                                        className="text-gray-600 hover:text-gray-900 border border-gray-200 bg-gray-50 hover:bg-gray-100 p-1.5 rounded-lg flex items-center justify-center transition"
-                                        title="Download PDF Payslip"
+                                        className="text-gray-600 hover:text-indigo-900 border-2 border-indigo-500 bg-indigo-50 hover:bg-indigo-100 p-1.5 rounded-lg flex items-center justify-center transition animate-pulse"
+                                        title="Download PDF Payslip (UPDATE v0.0.1)"
                                       >
                                         <Download className="w-4 h-4" />
                                       </button>
