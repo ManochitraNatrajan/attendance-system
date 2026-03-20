@@ -326,7 +326,7 @@ export default function Attendance() {
       </div>
 
       {todayRecord && !todayRecord.checkOut && (
-        <div id="work-details-section" className="bg-white rounded-xl shadow-md border-2 border-indigo-200 p-6 mb-8 ring-4 ring-indigo-50 ring-opacity-50 animate-[pulse_3s_infinite]">
+        <div id="work-details-section" className="bg-white rounded-xl shadow-md border-2 border-indigo-200 p-6 mb-8 ring-4 ring-indigo-50 ring-opacity-50">
           <h2 className="text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
             <Clock className="text-indigo-600" />
             Shift Action Required: Today's Work Details
