@@ -252,15 +252,16 @@ export default function SalaryModal({ employee, onClose }) {
                                 ) : (
                                   <div className="flex justify-end gap-2 items-center">
 
-                                    <button
-                                      onClick={() => {
-                                        window.open(`http://localhost:5000/api/salary/download-payslip/${record.id}`, '_blank');
-                                      }}
-                                      className="text-gray-600 hover:text-gray-900 border border-gray-200 bg-gray-50 hover:bg-gray-100 p-1.5 rounded-lg flex items-center justify-center transition"
-                                      title="Download PDF Payslip"
-                                    >
-                                      <Download className="w-4 h-4" />
-                                    </button>
+                                      <button
+                                        onClick={() => {
+                                          const baseUrl = axios.defaults.baseURL || '';
+                                          window.open(`${baseUrl}/api/salary/download-payslip/${record.id}`, '_blank');
+                                        }}
+                                        className="text-gray-600 hover:text-gray-900 border border-gray-200 bg-gray-50 hover:bg-gray-100 p-1.5 rounded-lg flex items-center justify-center transition"
+                                        title="Download PDF Payslip"
+                                      >
+                                        <Download className="w-4 h-4" />
+                                      </button>
 
                                     <button
                                       onClick={() => {
