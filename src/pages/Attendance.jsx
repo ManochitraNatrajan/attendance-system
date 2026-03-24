@@ -10,9 +10,14 @@ export default function Attendance() {
   const [actionLoading, setActionLoading] = useState(false);
   const [sessionSummary, setSessionSummary] = useState(null);
   const [workDetails, setWorkDetails] = useState(Array(10).fill(''));
+  const [distanceTraveled, setDistanceTraveled] = useState('');
+  const [foodExpense, setFoodExpense] = useState('');
   const [savingDetails, setSavingDetails] = useState(false);
   const [viewingDetailsFor, setViewingDetailsFor] = useState(null);
+  const [viewingMapFor, setViewingMapFor] = useState(null);
   const watchIdRef = useRef(null);
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
 
   
   const user = JSON.parse(localStorage.getItem('user'));
@@ -26,7 +31,7 @@ export default function Attendance() {
         ? '/api/attendance'
         : `/api/attendance?employeeId=${user.id}`;
       
-      const res = await axios.get(endpoint);
+      const res = await axios.get(`${endpoint}${endpoint.includes('?') ? '&' : '?'}cacheBust=${Date.now()}`);
       // Sort desc by date, then checkIn time
       const sortedRecords = res.data.sort((a, b) => {
         if (a.date === b.date) {
@@ -39,13 +44,22 @@ export default function Attendance() {
       // Determine today's record for action buttons
       const userTodayRecord = res.data.find(r => r.employeeId === user.id && r.date === todayStr);
       setTodayRecord(userTodayRecord || null);
-      if (userTodayRecord && userTodayRecord.workDetails) {
-        // Ensure it's padded to 10 points
-        const loaded = [...userTodayRecord.workDetails];
-        while (loaded.length < 10) loaded.push('');
-        setWorkDetails(loaded.slice(0, 10));
+
+      if (userTodayRecord) {
+        setDistanceTraveled(userTodayRecord.distanceTraveled !== undefined ? userTodayRecord.distanceTraveled.toString() : '');
+        setFoodExpense(userTodayRecord.foodExpense !== undefined ? userTodayRecord.foodExpense.toString() : '');
+        
+        if (userTodayRecord.workDetails && userTodayRecord.workDetails.length > 0) {
+            const loaded = [...userTodayRecord.workDetails];
+            while (loaded.length < 10) loaded.push('');
+            setWorkDetails(loaded.slice(0, 10));
+        } else {
+            setWorkDetails(Array(10).fill(''));
+        }
       } else {
         setWorkDetails(Array(10).fill(''));
+        setDistanceTraveled('');
+        setFoodExpense('');
       }
 
     } catch (err) {
@@ -90,6 +104,52 @@ export default function Attendance() {
     };
   }, [todayRecord, user.id]);
 
+  useEffect(() => {
+    if (viewingMapFor && mapRef.current) {
+        // Initialize Leaflet map
+        if (mapInstanceRef.current) { mapInstanceRef.current.remove(); }
+        
+        const center = viewingMapFor.checkInLocation || viewingMapFor.checkOutLocation || { lat: 20.5937, lng: 78.9629 };
+        const map = window.L.map(mapRef.current).setView([center.lat, center.lng], 13);
+        mapInstanceRef.current = map;
+
+        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Path points
+        const points = [];
+        if (viewingMapFor.checkInLocation) points.push([viewingMapFor.checkInLocation.lat, viewingMapFor.checkInLocation.lng]);
+        
+        if (viewingMapFor.locationHistory && viewingMapFor.locationHistory.length > 0) {
+            viewingMapFor.locationHistory.forEach(p => points.push([p.lat, p.lng]));
+        }
+
+        if (viewingMapFor.checkOutLocation) points.push([viewingMapFor.checkOutLocation.lat, viewingMapFor.checkOutLocation.lng]);
+
+        if (points.length > 0) {
+            // Draw path (blue line)
+            window.L.polyline(points, { color: 'blue', weight: 4, opacity: 0.7 }).addTo(map);
+
+            // Add markers
+            if (viewingMapFor.checkInLocation) {
+                window.L.marker([viewingMapFor.checkInLocation.lat, viewingMapFor.checkInLocation.lng])
+                    .addTo(map)
+                    .bindPopup(`<b>Check-in:</b> ${viewingMapFor.checkInLocationName || 'Start'}`);
+            }
+            if (viewingMapFor.checkOutLocation) {
+                window.L.marker([viewingMapFor.checkOutLocation.lat, viewingMapFor.checkOutLocation.lng])
+                    .addTo(map)
+                    .bindPopup(`<b>Check-out:</b> ${viewingMapFor.checkOutLocationName || 'End'}`);
+            }
+
+            // Fit bounds
+            const bounds = window.L.latLngBounds(points);
+            map.fitBounds(bounds, { padding: [30, 30] });
+        }
+    }
+  }, [viewingMapFor]);
+
   // Background Live Sync Loop
   useEffect(() => {
     let syncInterval;
@@ -113,6 +173,15 @@ export default function Attendance() {
     };
   }, [todayRecord, user.id]);
 
+  const fetchLocationName = async (lat, lng) => {
+    try {
+      const res = await axios.get(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+      return res.data?.address?.city || res.data?.address?.town || res.data?.address?.county || res.data?.address?.village || 'Local Area';
+    } catch {
+      return '';
+    }
+  };
+
   const handleCheckIn = async () => {
     if (!navigator.geolocation) {
       alert('Geolocation is not supported by your browser');
@@ -132,10 +201,12 @@ export default function Attendance() {
         }));
 
         try {
+          const locationName = await fetchLocationName(latitude, longitude);
           const res = await axios.post('/api/attendance/check-in', { 
             employeeId: user.id,
             latitude,
-            longitude
+            longitude,
+            locationName
           });
           // Update todayRecord directly for instant UI update
           setTodayRecord(res.data);
@@ -205,15 +276,23 @@ export default function Attendance() {
       checkInTime: todayRecord?.checkIn || "-",
       checkOutTime: format(checkOutTimeDate, 'hh:mm a'),
       workingHours: diffHrs.toFixed(2),
+      distance: distanceTraveled || 0,
+      travelExpense: (Number(distanceTraveled) * 2.5).toFixed(2),
+      foodExpense: foodExpense || 0,
       status
     });
 
     try {
+      let locationName = '';
+      if (finalLat && finalLng) {
+        locationName = await fetchLocationName(finalLat, finalLng);
+      }
       const res = await axios.post('/api/attendance/check-out', { 
         employeeId: user.id,
         latitude: finalLat,
         longitude: finalLng,
-        status: status
+        status: status,
+        locationName
       });
       // Clear todayRecord or update it to reflect check-out for the button logic
       setTodayRecord(res.data);
@@ -237,7 +316,9 @@ export default function Attendance() {
     try {
       await axios.post('/api/attendance/work-details', {
         employeeId: user.id,
-        workDetails
+        workDetails,
+        distanceTraveled: Number(distanceTraveled),
+        foodExpense: Number(foodExpense)
       });
       alert('Success! Your 10-point work details have been saved and sent to the admin.');
       fetchAttendance();
@@ -350,6 +431,17 @@ export default function Attendance() {
               </div>
             ))}
           </div>
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
+            <div>
+              <label className="text-sm font-semibold text-gray-700 mb-1 block">Travel Distance (Kilometers)</label>
+              <input type="number" min="0" value={distanceTraveled} onChange={e => setDistanceTraveled(e.target.value)} placeholder="e.g. 15" className="w-full border border-gray-300 rounded-lg shadow-sm py-2 px-3 mb-2 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]" />
+              <p className="text-xs text-gray-500">Travel Expense (Auto-calculated): <span className="font-bold text-green-600">₹{(Number(distanceTraveled) * 2.5).toFixed(2)}</span> at ₹2.5/km</p>
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-gray-700 mb-1 block">Food Expense (₹)</label>
+              <input type="number" min="0" value={foodExpense} onChange={e => setFoodExpense(e.target.value)} placeholder="e.g. 150" className="w-full border border-gray-300 rounded-lg shadow-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]" />
+            </div>
+          </div>
           <div className="mt-6 flex justify-end">
              <button 
                onClick={handleSaveWorkDetails} 
@@ -388,6 +480,14 @@ export default function Attendance() {
                 <span className="text-blue-800">Total Hours</span>
                 <span className="font-bold text-blue-900">{sessionSummary.workingHours} hrs</span>
               </div>
+              <div className="flex flex-col text-sm bg-green-50 px-4 py-2 rounded-lg border border-green-200">
+                <span className="text-green-800">Travel Expense</span>
+                <span className="font-bold text-green-900">₹{sessionSummary.travelExpense} ({sessionSummary.distance} km)</span>
+              </div>
+              <div className="flex flex-col text-sm bg-orange-50 px-4 py-2 rounded-lg border border-orange-200">
+                <span className="text-orange-800">Food Expense</span>
+                <span className="font-bold text-orange-900">₹{sessionSummary.foodExpense}</span>
+              </div>
               <div className={`flex flex-col text-sm px-4 py-2 rounded-lg border font-bold justify-center items-center ${
                 sessionSummary.status === 'Present' ? 'bg-green-100 text-green-800 border-green-200' : 'bg-yellow-100 text-yellow-800 border-yellow-200'
               }`}>
@@ -414,6 +514,7 @@ export default function Attendance() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Check In</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Check Out</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dist / Exp</th>
                   {user.role === 'Admin' && <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Work Details</th>}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                 </tr>
@@ -436,19 +537,40 @@ export default function Attendance() {
                       {record.checkOut || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-500">
-                      {record.checkOutLocation ? (
-                        <a href={`https://www.google.com/maps?q=${record.checkOutLocation.lat},${record.checkOutLocation.lng}`} target="_blank" rel="noreferrer" className="text-gray-600 hover:text-gray-900 flex items-center gap-1">
-                          <MapPin className="w-4 h-4" /> Final Loc
-                        </a>
-                      ) : record.currentLocation && !record.checkOut ? (
-                        <a href={`https://www.google.com/maps?q=${record.currentLocation.lat},${record.currentLocation.lng}`} target="_blank" rel="noreferrer" className="text-red-500 hover:text-red-700 font-semibold flex items-center gap-1 animate-pulse">
-                          <MapPin className="w-4 h-4" /> LIVE
-                        </a>
-                      ) : record.checkInLocation ? (
-                        <a href={`https://www.google.com/maps?q=${record.checkInLocation.lat},${record.checkInLocation.lng}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 flex items-center gap-1">
-                          <MapPin className="w-4 h-4" /> Start Loc
-                        </a>
-                      ) : '-'}
+                      <div className="flex flex-col gap-1 text-xs">
+                        {record.checkInLocationName ? <a href={`https://www.google.com/maps?q=${record.checkInLocation.lat},${record.checkInLocation.lng}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 font-medium whitespace-normal">IN: {record.checkInLocationName}</a> : (record.checkInLocation ? <a href={`https://www.google.com/maps?q=${record.checkInLocation.lat},${record.checkInLocation.lng}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 flex items-center gap-1"><MapPin className="w-4 h-4" /> Start Loc</a> : null)}
+                        {record.checkOutLocationName ? <a href={`https://www.google.com/maps?q=${record.checkOutLocation.lat},${record.checkOutLocation.lng}`} target="_blank" rel="noreferrer" className="text-green-600 hover:text-green-800 font-medium whitespace-normal">OUT: {record.checkOutLocationName}</a> : (record.checkOutLocation ? <a href={`https://www.google.com/maps?q=${record.checkOutLocation.lat},${record.checkOutLocation.lng}`} target="_blank" rel="noreferrer" className="text-gray-600 hover:text-gray-900 flex items-center gap-1"><MapPin className="w-4 h-4" /> Final Loc</a> : null)}
+                        {record.currentLocation && !record.checkOut ? <a href={`https://www.google.com/maps?q=${record.currentLocation.lat},${record.currentLocation.lng}`} target="_blank" rel="noreferrer" className="text-red-500 hover:text-red-700 font-semibold flex items-center gap-1 animate-pulse"><MapPin className="w-4 h-4" /> LIVE</a> : null}
+                        
+                        {record.checkInLocation && record.checkOutLocation && (
+                           <div className="flex flex-col gap-2 mt-1.5">
+                            <button onClick={() => setViewingMapFor(record)} className="bg-indigo-600 text-white px-2 py-1.5 rounded-lg border border-indigo-700 font-bold text-center hover:bg-indigo-700 transition flex items-center justify-center gap-1 shadow-sm text-[10px] uppercase tracking-tighter">
+                                <Search className="w-3 h-3"/> Show Path Map
+                            </button>
+                            <a href={`https://www.google.com/maps/dir/?api=1&origin=${record.checkInLocation.lat},${record.checkInLocation.lng}&destination=${record.checkOutLocation.lat},${record.checkOutLocation.lng}&travelmode=driving`} target="_blank" rel="noreferrer" className="bg-white text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-semibold text-center hover:bg-indigo-50 transition flex items-center justify-center gap-1 text-[10px]">
+                                <MapPin className="w-3 h-3"/> Google Route
+                            </a>
+                           </div>
+                        )}
+
+                        {!record.checkInLocation && !record.checkOutLocation && !record.currentLocation && '-'}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-left text-sm">
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-1.5 text-gray-900 font-bold bg-gray-50 px-2 py-1 rounded border border-gray-100 w-fit">
+                            <span className="text-[10px] text-gray-400 uppercase">Dist:</span>
+                            <span>{record.distanceTraveled || 0} km</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-green-700 font-extrabold bg-green-50 px-2 py-1 rounded border border-green-100 w-fit">
+                            <span className="text-[10px] text-green-500 uppercase">Travel:</span>
+                            <span>₹{record.travelExpense || 0}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-orange-700 font-extrabold bg-orange-50 px-2 py-1 rounded border border-orange-100 w-fit">
+                            <span className="text-[10px] text-orange-500 uppercase">Food:</span>
+                            <span>₹{record.foodExpense || 0}</span>
+                        </div>
+                      </div>
                     </td>
                     {user.role === 'Admin' && (
                       <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-500">
@@ -471,7 +593,7 @@ export default function Attendance() {
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={user.role === 'Admin' ? "5" : "4"} className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan={user.role === 'Admin' ? "8" : "6"} className="px-6 py-8 text-center text-gray-500">
                       No attendance records found.
                     </td>
                   </tr>
@@ -510,6 +632,44 @@ export default function Attendance() {
             <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end">
                <button onClick={() => setViewingDetailsFor(null)} className="px-5 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 transition">
                   Close Review
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewingMapFor && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col relative z-[101]">
+            <div className="px-6 py-4 flex justify-between items-center border-b border-gray-100 bg-gray-50/50">
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">Attendance Path Map</h3>
+                <p className="text-sm text-gray-500">Employee: {viewingMapFor.employeeName} | Date: {viewingMapFor.date}</p>
+              </div>
+              <button onClick={() => setViewingMapFor(null)} className="text-gray-400 hover:text-gray-600 bg-white hover:bg-gray-100 rounded-full p-2 transition-colors border border-gray-200">
+                <X className="w-5 h-5"/>
+              </button>
+            </div>
+            <div className="p-6">
+                <div ref={mapRef} style={{ height: '400px', width: '100%', borderRadius: '12px', border: '1px solid #ddd' }}></div>
+                <div className="mt-4 flex justify-between text-xs text-gray-500 font-medium bg-gray-50 p-3 rounded-lg border border-gray-100">
+                    <div className="flex flex-col gap-1">
+                        <span className="text-blue-600 font-bold">START: {viewingMapFor.checkInLocationName || 'Unknown'}</span>
+                        <span>{viewingMapFor.checkIn}</span>
+                    </div>
+                    <div className="text-center flex flex-col gap-1">
+                        <span className="text-indigo-600 font-extrabold uppercase tracking-widest">{viewingMapFor.distanceTraveled || 0} KM TRACKED</span>
+                        <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full inline-block">Blue Line: Travel Path</span>
+                    </div>
+                    <div className="flex flex-col gap-1 text-right">
+                        <span className="text-green-600 font-bold">END: {viewingMapFor.checkOutLocationName || 'Unknown'}</span>
+                        <span>{viewingMapFor.checkOut}</span>
+                    </div>
+                </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end">
+               <button onClick={() => setViewingMapFor(null)} className="px-5 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 transition">
+                  Close Map
                </button>
             </div>
           </div>

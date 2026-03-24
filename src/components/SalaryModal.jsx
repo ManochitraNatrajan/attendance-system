@@ -39,7 +39,9 @@ export default function SalaryModal({ employee, onClose }) {
         monthlySalary: data.currentMonth.monthlySalary,
         totalSalary: data.currentMonth.estimatedSalary,
         bonus: Number(currentBonus) || 0,
-        deductions: Number(currentAdvance) || 0
+        deductions: Number(currentAdvance) || 0,
+        travelExpense: data.currentMonth.totalTravelExpense || 0,
+        foodExpense: data.currentMonth.totalFoodExpense || 0
       });
       alert('Salary month saved to history!');
       setCurrentBonus('');
@@ -115,7 +117,7 @@ export default function SalaryModal({ employee, onClose }) {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
                   <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
                     <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Bonus (+)</span>
                     <div className="flex items-center mt-1">
@@ -128,6 +130,14 @@ export default function SalaryModal({ employee, onClose }) {
                         placeholder="0"
                       />
                     </div>
+                  </div>
+                  <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
+                    <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Travel (+)</span>
+                    <div className="text-2xl font-bold text-gray-900 mt-1">₹{data.currentMonth.totalTravelExpense || 0}</div>
+                  </div>
+                  <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
+                    <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Food (+)</span>
+                    <div className="text-2xl font-bold text-gray-900 mt-1">₹{data.currentMonth.totalFoodExpense || 0}</div>
                   </div>
                   <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
                     <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Advance / Deductions (-)</span>
@@ -145,7 +155,7 @@ export default function SalaryModal({ employee, onClose }) {
                   <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 rounded-xl shadow-md text-white flex flex-col justify-center border border-indigo-500">
                     <span className="text-xs text-indigo-100 font-semibold uppercase tracking-wider">Total Net Pay</span>
                     <div className="text-3xl font-extrabold mt-1">
-                      ₹{((data.currentMonth.estimatedSalary || 0) + (Number(currentBonus) || 0) - (Number(currentAdvance) || 0)).toLocaleString()}
+                      ₹{((data.currentMonth.estimatedSalary || 0) + (Number(currentBonus) || 0) - (Number(currentAdvance) || 0) + (data.currentMonth.totalTravelExpense || 0) + (data.currentMonth.totalFoodExpense || 0)).toLocaleString()}
                     </div>
                   </div>
                 </div>
@@ -175,6 +185,8 @@ export default function SalaryModal({ employee, onClose }) {
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Days</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Base</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Bonus</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Travel</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Food</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Advance (-)</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Net Pay</th>
                           <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Status</th>
@@ -201,6 +213,13 @@ export default function SalaryModal({ employee, onClose }) {
                                 ) : (
                                   <span className="text-green-600 font-medium">+₹{record.bonus?.toLocaleString() || 0}</span>
                                 )}
+                              </td>
+
+                              <td className="px-4 py-4 whitespace-nowrap text-sm text-right">
+                                <span className="text-green-600 font-medium">+₹{record.travelExpense?.toLocaleString() || 0}</span>
+                              </td>
+                              <td className="px-4 py-4 whitespace-nowrap text-sm text-right">
+                                <span className="text-green-600 font-medium">+₹{record.foodExpense?.toLocaleString() || 0}</span>
                               </td>
 
                               <td className="px-4 py-4 whitespace-nowrap text-sm text-right">

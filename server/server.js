@@ -27,8 +27,14 @@ const attendanceSchema = new mongoose.Schema({
   checkOut: { type: String, default: null }, 
   status: { type: String, default: 'Pending' }, 
   checkInLocation: { lat: Number, lng: Number },
+  checkInLocationName: { type: String, default: '' },
   checkOutLocation: { lat: Number, lng: Number },
+  checkOutLocationName: { type: String, default: '' },
   currentLocation: { lat: Number, lng: Number, timestamp: Date },
+  locationHistory: [{ lat: Number, lng: Number, timestamp: Date }],
+  distanceTraveled: { type: Number, default: 0 },
+  travelExpense: { type: Number, default: 0 },
+  foodExpense: { type: Number, default: 0 },
   workDetails: [{ type: String }]
 }, { timestamps: true });
 attendanceSchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d, r) => { r.id = r._id.toString(); r.employeeId = r.employeeId.toString(); delete r._id; }});
@@ -42,6 +48,8 @@ const salaryHistorySchema = new mongoose.Schema({
   baseSalary: { type: Number, default: 0 },
   bonus: { type: Number, default: 0 },
   deductions: { type: Number, default: 0 },
+  travelExpense: { type: Number, default: 0 },
+  foodExpense: { type: Number, default: 0 },
   netSalary: { type: Number, default: 0 },
   isPaid: { type: Boolean, default: false }
 }, { timestamps: true });
@@ -241,7 +249,7 @@ app.get('/api/attendance', async (req, res) => {
 
 app.post('/api/attendance/check-in', async (req, res) => {
   try {
-    const { employeeId, latitude, longitude } = req.body;
+    const { employeeId, latitude, longitude, locationName } = req.body;
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
     const nowTime = format(nowIST, 'HH:mm:ss');
@@ -258,6 +266,7 @@ app.post('/api/attendance/check-in', async (req, res) => {
       checkOut: null,
       status: 'Present',
       checkInLocation: (latitude && longitude) ? { lat: Number(latitude), lng: Number(longitude) } : null,
+      checkInLocationName: locationName || '',
       checkOutLocation: null
     });
     
@@ -270,13 +279,22 @@ app.post('/api/attendance/check-in', async (req, res) => {
 
 app.post('/api/attendance/work-details', async (req, res) => {
   try {
-    const { employeeId, workDetails } = req.body;
+    const { employeeId, workDetails, distanceTraveled, foodExpense } = req.body;
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
     
+    const dist = Number(distanceTraveled) || 0;
+    const food = Number(foodExpense) || 0;
+    const travelExp = dist * 2.5;
+    
     const record = await Attendance.findOneAndUpdate(
       { employeeId, date: today }, 
-      { workDetails },
+      { 
+        workDetails,
+        distanceTraveled: dist,
+        travelExpense: travelExp,
+        foodExpense: food
+      },
       { new: true }
     );
     
@@ -299,7 +317,10 @@ app.post('/api/attendance/live-location', async (req, res) => {
     const today = format(nowIST, 'yyyy-MM-dd');
     const record = await Attendance.findOneAndUpdate(
       { employeeId, date: today, checkOut: null },
-      { currentLocation: { lat: Number(lat), lng: Number(lng), timestamp: new Date() } }
+      { 
+        currentLocation: { lat: Number(lat), lng: Number(lng), timestamp: new Date() },
+        $push: { locationHistory: { lat: Number(lat), lng: Number(lng), timestamp: new Date() } }
+      }
     );
     
     if (record) res.json({ success: true });
@@ -331,6 +352,7 @@ app.post('/api/attendance/check-out', async (req, res) => {
     
     if (latitude && longitude) {
       record.checkOutLocation = { lat: Number(latitude), lng: Number(longitude) };
+      record.checkOutLocationName = req.body.locationName || '';
     }
     
     await record.save();
@@ -386,9 +408,14 @@ app.get('/api/salary/:employeeId', async (req, res) => {
     });
     
     let totalDaysWorked = 0;
+    let totalTravelExpense = 0;
+    let totalFoodExpense = 0;
     monthRecords.forEach(r => {
       if (r.status === 'Full Day Present' || r.status === 'Present') totalDaysWorked += 1;
       else if (r.status === 'Half Day Present') totalDaysWorked += 0.5;
+      
+      totalTravelExpense += (r.travelExpense || 0);
+      totalFoodExpense += (r.foodExpense || 0);
     });
     
     const paidDays = Math.min(daysInMonth, totalDaysWorked + sundays);
@@ -406,7 +433,9 @@ app.get('/api/salary/:employeeId', async (req, res) => {
         totalDaysWorked,
         totalPaidDays: paidDays,
         monthlySalary,
-        estimatedSalary
+        estimatedSalary,
+        totalTravelExpense,
+        totalFoodExpense
       },
       history
     });
@@ -418,7 +447,7 @@ app.get('/api/salary/:employeeId', async (req, res) => {
 
 app.post('/api/salary/save', async (req, res) => {
   try {
-    const { employeeId, month, totalDays, monthlySalary, totalSalary, bonus = 0, deductions = 0 } = req.body;
+    const { employeeId, month, totalDays, monthlySalary, totalSalary, bonus = 0, deductions = 0, travelExpense = 0, foodExpense = 0 } = req.body;
     
     const exists = await SalaryHistory.findOne({ employeeId, month });
     if (exists) {
@@ -430,7 +459,9 @@ app.post('/api/salary/save', async (req, res) => {
       baseSalary: totalSalary,
       bonus: Number(bonus),
       deductions: Number(deductions),
-      netSalary: totalSalary + Number(bonus) - Number(deductions),
+      travelExpense: Number(travelExpense),
+      foodExpense: Number(foodExpense),
+      netSalary: totalSalary + Number(bonus) - Number(deductions) + Number(travelExpense) + Number(foodExpense),
       isPaid: false
     });
     
@@ -446,7 +477,7 @@ app.put('/api/salary/history/:id', async (req, res) => {
     if (!record) return res.status(404).json({ message: 'Salary record not found' });
     
     Object.assign(record, req.body);
-    record.netSalary = record.baseSalary + Number(record.bonus || 0) - Number(record.deductions || 0);
+    record.netSalary = record.baseSalary + Number(record.bonus || 0) - Number(record.deductions || 0) + Number(record.travelExpense || 0) + Number(record.foodExpense || 0);
     await record.save();
     res.json(record);
   } catch (err) {
@@ -481,6 +512,8 @@ const generatePDFBuffer = (record, emp) => {
       
       doc.text(`Calculated Base Earnings: Rs. ${record.baseSalary}`);
       doc.text(`Bonus (+): Rs. ${record.bonus || 0}`);
+      doc.text(`Travel Expense (+): Rs. ${record.travelExpense || 0}`);
+      doc.text(`Food Expense (+): Rs. ${record.foodExpense || 0}`);
       doc.text(`Advance / Deductions (-): Rs. ${record.deductions || 0}`);
       doc.moveDown(2);
       

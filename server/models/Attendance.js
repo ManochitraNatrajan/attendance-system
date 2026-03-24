@@ -19,6 +19,16 @@ const attendanceSchema = new mongoose.Schema({
     lng: Number,
     timestamp: Date
   },
+  locationHistory: [{
+    lat: Number,
+    lng: Number,
+    timestamp: Date
+  }],
+  distanceTraveled: { type: Number, default: 0 },
+  travelExpense: { type: Number, default: 0 },
+  foodExpense: { type: Number, default: 0 },
+  checkInLocationName: { type: String, default: '' },
+  checkOutLocationName: { type: String, default: '' },
   workDetails: [{ type: String }]
 }, { timestamps: true });
 
