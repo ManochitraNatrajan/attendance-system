@@ -15,7 +15,6 @@ export default function Attendance() {
   const [savingDetails, setSavingDetails] = useState(false);
   const [viewingDetailsFor, setViewingDetailsFor] = useState(null);
   const [viewingMapFor, setViewingMapFor] = useState(null);
-  const watchIdRef = useRef(null);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
 
@@ -45,6 +44,12 @@ export default function Attendance() {
       const userTodayRecord = res.data.find(r => r.employeeId === user.id && r.date === todayStr);
       setTodayRecord(userTodayRecord || null);
 
+      if (userTodayRecord && userTodayRecord.checkIn && !userTodayRecord.checkOut) {
+        localStorage.setItem('isCheckedIn', 'true');
+      } else {
+        localStorage.removeItem('isCheckedIn');
+      }
+
       if (userTodayRecord) {
         setDistanceTraveled(userTodayRecord.distanceTraveled !== undefined ? userTodayRecord.distanceTraveled.toString() : '');
         setFoodExpense(userTodayRecord.foodExpense !== undefined ? userTodayRecord.foodExpense.toString() : '');
@@ -73,36 +78,7 @@ export default function Attendance() {
     fetchAttendance();
   }, [user.id, user.role]);
 
-  useEffect(() => {
-    if (todayRecord && todayRecord.checkIn && !todayRecord.checkOut) {
-      if (watchIdRef.current === null && navigator.geolocation) {
-        watchIdRef.current = navigator.geolocation.watchPosition(
-          (pos) => {
-            const { latitude, longitude } = pos.coords;
-            localStorage.setItem(`currentLoc_${user.id}`, JSON.stringify({
-              lat: latitude,
-              lng: longitude,
-              timestamp: new Date().toISOString()
-            }));
-          },
-          (err) => console.error("Error watching position:", err),
-          { enableHighAccuracy: true }
-        );
-      }
-    } else {
-      if (watchIdRef.current !== null && navigator.geolocation) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
-    }
 
-    return () => {
-      if (watchIdRef.current !== null && navigator.geolocation) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
-    };
-  }, [todayRecord, user.id]);
 
   useEffect(() => {
     if (viewingMapFor && mapRef.current) {
@@ -150,28 +126,7 @@ export default function Attendance() {
     }
   }, [viewingMapFor]);
 
-  // Background Live Sync Loop
-  useEffect(() => {
-    let syncInterval;
-    if (todayRecord && todayRecord.checkIn && !todayRecord.checkOut) {
-       syncInterval = setInterval(async () => {
-         const locStr = localStorage.getItem(`currentLoc_${user.id}`);
-         if (locStr) {
-           try {
-             const { lat, lng } = JSON.parse(locStr);
-             await axios.post('/api/attendance/live-location', {
-               employeeId: user.id, lat, lng
-             });
-           } catch (e) {
-             // Silently fail sync errors to avoid spamming the console
-           }
-         }
-       }, 60000); // 60 seconds
-    }
-    return () => {
-      if (syncInterval) clearInterval(syncInterval);
-    };
-  }, [todayRecord, user.id]);
+
 
   const fetchLocationName = async (lat, lng) => {
     try {
@@ -210,6 +165,7 @@ export default function Attendance() {
           });
           // Update todayRecord directly for instant UI update
           setTodayRecord(res.data);
+          localStorage.setItem('isCheckedIn', 'true');
           
           // Re-fetch to ensure history table is updated
           fetchAttendance();
@@ -239,10 +195,6 @@ export default function Attendance() {
 
     let finalLat = null;
     let finalLng = null;
-    if (watchIdRef.current !== null && navigator.geolocation) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
     
     const locStr = localStorage.getItem(`currentLoc_${user.id}`);
     if (locStr) {
@@ -292,10 +244,14 @@ export default function Attendance() {
         latitude: finalLat,
         longitude: finalLng,
         status: status,
-        locationName
+        locationName,
+        distanceTraveled: Number(distanceTraveled) || 0,
+        foodExpense: Number(foodExpense) || 0,
+        workDetails
       });
       // Clear todayRecord or update it to reflect check-out for the button logic
       setTodayRecord(res.data);
+      localStorage.removeItem('isCheckedIn');
       fetchAttendance();
     } catch (err) {
       console.error(err);

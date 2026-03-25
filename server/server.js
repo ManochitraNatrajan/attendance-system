@@ -332,7 +332,7 @@ app.post('/api/attendance/live-location', async (req, res) => {
 
 app.post('/api/attendance/check-out', async (req, res) => {
   try {
-    const { employeeId, latitude, longitude, status } = req.body;
+    const { employeeId, latitude, longitude, status, distanceTraveled, foodExpense, workDetails } = req.body;
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
     const nowTime = format(nowIST, 'HH:mm:ss');
@@ -353,6 +353,19 @@ app.post('/api/attendance/check-out', async (req, res) => {
     if (latitude && longitude) {
       record.checkOutLocation = { lat: Number(latitude), lng: Number(longitude) };
       record.checkOutLocationName = req.body.locationName || '';
+    }
+    
+    if (distanceTraveled !== undefined) {
+      const dist = Number(distanceTraveled) || 0;
+      record.distanceTraveled = dist;
+      record.travelExpense = dist * 2.5; 
+    }
+    if (foodExpense !== undefined) {
+      record.foodExpense = Number(foodExpense) || 0;
+    }
+    
+    if (workDetails !== undefined) {
+      record.workDetails = workDetails;
     }
     
     await record.save();

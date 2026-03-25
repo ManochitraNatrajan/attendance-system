@@ -4,12 +4,14 @@ import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Employees from './pages/Employees';
 import Attendance from './pages/Attendance';
+import GlobalLocationTracker from './components/GlobalLocationTracker';
 
 function App() {
   const user = JSON.parse(localStorage.getItem('user'));
 
   return (
     <Router>
+      <GlobalLocationTracker />
       {user && <Navbar />}
       <div className="flex-1 overflow-auto bg-[var(--bg)] w-full h-full text-[var(--text)]">
         <Routes>
