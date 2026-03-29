@@ -609,6 +609,8 @@ app.get('/api/salary/download-payslip/:recordId', async (req, res) => {
   }
 });
 
+app.get('/api/ping', (req, res) => res.json({ status: 'ok' }));
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

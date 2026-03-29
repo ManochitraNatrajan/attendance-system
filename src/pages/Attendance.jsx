@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { format } from 'date-fns';
 import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X } from 'lucide-react';
+import Skeleton from '../components/Skeleton';
 
 export default function Attendance() {
   const [records, setRecords] = useState([]);
@@ -309,6 +310,26 @@ export default function Attendance() {
       await handleCheckOut();
     }
   };
+
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        <div className="mb-8 text-left">
+          <Skeleton className="h-10 w-48 mb-2" />
+          <Skeleton className="h-4 w-64" />
+        </div>
+        <Skeleton className="h-40 w-full rounded-xl mb-8" />
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
+             <Skeleton className="h-6 w-32" />
+          </div>
+          <div className="p-6 space-y-4">
+            {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-12 w-full" />)}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">

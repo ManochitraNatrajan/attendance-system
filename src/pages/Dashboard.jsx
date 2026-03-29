@@ -3,6 +3,8 @@ import axios from 'axios';
 import { format } from 'date-fns';
 import { Users, UserCheck, UserX, Clock } from 'lucide-react';
 
+import Skeleton from '../components/Skeleton';
+
 export default function Dashboard() {
   const [stats, setStats] = useState({ total: 0, present: 0, absent: 0 });
   const [loading, setLoading] = useState(true);
@@ -38,11 +40,15 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center p-12">
-        <div className="animate-pulse flex flex-col items-center">
-          <div className="w-12 h-12 bg-gray-200 rounded-full mb-4"></div>
-          <div className="h-4 w-32 bg-gray-200 rounded"></div>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        <div className="mb-8">
+            <Skeleton className="h-10 w-48 mb-2" />
+            <Skeleton className="h-4 w-64" />
         </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}
+        </div>
+        <Skeleton className="h-48 w-full rounded-xl" />
       </div>
     );
   }
