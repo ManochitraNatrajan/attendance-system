@@ -26,7 +26,7 @@ export default function SalaryModal({ employee, onClose }) {
 
   useEffect(() => {
     fetchSalaryDetails();
-  }, [employee]);
+  }, [employee?.id]);
 
   const handleSaveMonth = async () => {
     if (!data || !data.currentMonth) return;

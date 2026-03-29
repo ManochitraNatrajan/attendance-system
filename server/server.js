@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import { format } from 'date-fns';
 import nodemailer from 'nodemailer';
 import 'dotenv/config';
@@ -12,7 +13,7 @@ import mongoose from 'mongoose';
 const employeeSchema = new mongoose.Schema({
   name: { type: String, required: true },
   role: { type: String, required: true },
-  contact: { type: String, required: true },
+  contact: { type: String, required: true, index: true },
   password: { type: String, required: true },
   monthlySalary: { type: Number, default: 0 },
   dailyWage: { type: Number, default: 0 }
@@ -21,8 +22,8 @@ employeeSchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d,
 const Employee = mongoose.model('Employee', employeeSchema);
 
 const attendanceSchema = new mongoose.Schema({
-  employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
-  date: { type: String, required: true }, 
+  employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
+  date: { type: String, required: true, index: true }, 
   checkIn: { type: String }, 
   checkOut: { type: String, default: null }, 
   status: { type: String, default: 'Pending' }, 
@@ -37,6 +38,7 @@ const attendanceSchema = new mongoose.Schema({
   foodExpense: { type: Number, default: 0 },
   workDetails: [{ type: String }]
 }, { timestamps: true });
+attendanceSchema.index({ date: 1, employeeId: 1 });
 attendanceSchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d, r) => { r.id = r._id.toString(); r.employeeId = r.employeeId.toString(); delete r._id; }});
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
@@ -53,6 +55,7 @@ const salaryHistorySchema = new mongoose.Schema({
   netSalary: { type: Number, default: 0 },
   isPaid: { type: Boolean, default: false }
 }, { timestamps: true });
+salaryHistorySchema.index({ employeeId: 1, month: -1 });
 salaryHistorySchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d, r) => { r.id = r._id.toString(); r.employeeId = r.employeeId.toString(); delete r._id; }});
 const SalaryHistory = mongoose.model('SalaryHistory', salaryHistorySchema);
 // =======================
@@ -80,6 +83,7 @@ mongoose.connect(MONGODB_URI)
   .catch(err => console.error('MongoDB connection error:', err));
 
 app.use(cors());
+app.use(compression());
 app.use(express.json());
 
 // === OTP Storage ===
@@ -231,7 +235,7 @@ app.get('/api/attendance', async (req, res) => {
       query.date = { $gte: thirtyDaysAgoStr };
     }
     
-    const records = await Attendance.find(query).populate('employeeId').lean();
+    const records = await Attendance.find(query).populate('employeeId').select('-locationHistory').lean();
     
     const enrichedRecords = records.map(r => ({
       ...r,
@@ -243,6 +247,16 @@ app.get('/api/attendance', async (req, res) => {
     res.json(enrichedRecords);
   } catch (err) {
     console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/attendance/:id', async (req, res) => {
+  try {
+    const record = await Attendance.findById(req.params.id).populate('employeeId').lean();
+    if (!record) return res.status(404).json({ message: 'Record not found' });
+    res.json(record);
+  } catch (err) {
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -320,7 +334,8 @@ app.post('/api/attendance/live-location', async (req, res) => {
       { 
         currentLocation: { lat: Number(lat), lng: Number(lng), timestamp: new Date() },
         $push: { locationHistory: { lat: Number(lat), lng: Number(lng), timestamp: new Date() } }
-      }
+      },
+      { new: true, select: '-locationHistory' }
     );
     
     if (record) res.json({ success: true });
@@ -379,7 +394,7 @@ app.post('/api/attendance/check-out', async (req, res) => {
 // === Reports API ===
 app.get('/api/reports', async (req, res) => {
   try {
-    const records = await Attendance.find().populate('employeeId').lean();
+    const records = await Attendance.find().populate('employeeId').select('-locationHistory').lean();
     const enrichedRecords = records.map(r => ({
       ...r,
       employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
@@ -418,7 +433,7 @@ app.get('/api/salary/:employeeId', async (req, res) => {
     const monthRecords = await Attendance.find({ 
       employeeId, 
       date: new RegExp('^' + targetYearMonth) 
-    });
+    }).select('-locationHistory');
     
     let totalDaysWorked = 0;
     let totalTravelExpense = 0;

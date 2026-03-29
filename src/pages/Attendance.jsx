@@ -15,6 +15,7 @@ export default function Attendance() {
   const [savingDetails, setSavingDetails] = useState(false);
   const [viewingDetailsFor, setViewingDetailsFor] = useState(null);
   const [viewingMapFor, setViewingMapFor] = useState(null);
+  const [mapLoading, setMapLoading] = useState(false);
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
 
@@ -30,7 +31,7 @@ export default function Attendance() {
         ? '/api/attendance'
         : `/api/attendance?employeeId=${user.id}`;
       
-      const res = await axios.get(`${endpoint}${endpoint.includes('?') ? '&' : '?'}cacheBust=${Date.now()}`);
+      const res = await axios.get(endpoint);
       // Sort desc by date, then checkIn time
       const sortedRecords = res.data.sort((a, b) => {
         if (a.date === b.date) {
@@ -288,6 +289,19 @@ export default function Attendance() {
     }
   };
 
+  const handleShowMap = async (record) => {
+    setMapLoading(true);
+    try {
+      const res = await axios.get(`/api/attendance/${record.id}`);
+      setViewingMapFor(res.data);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to load map data.");
+    } finally {
+      setMapLoading(false);
+    }
+  };
+
   const handleAction = async (type) => {
     if (type === 'check-in') {
       await handleCheckIn();
@@ -500,8 +514,15 @@ export default function Attendance() {
                         
                         {record.checkInLocation && record.checkOutLocation && (
                            <div className="flex flex-col gap-2 mt-1.5">
-                            <button onClick={() => setViewingMapFor(record)} className="bg-indigo-600 text-white px-2 py-1.5 rounded-lg border border-indigo-700 font-bold text-center hover:bg-indigo-700 transition flex items-center justify-center gap-1 shadow-sm text-[10px] uppercase tracking-tighter">
-                                <Search className="w-3 h-3"/> Show Path Map
+                            <button 
+                              onClick={() => handleShowMap(record)} 
+                              disabled={mapLoading}
+                              className="bg-indigo-600 text-white px-2 py-1.5 rounded-lg border border-indigo-700 font-bold text-center hover:bg-indigo-700 transition flex items-center justify-center gap-1 shadow-sm text-[10px] uppercase tracking-tighter disabled:opacity-50"
+                            >
+                                {mapLoading ? (
+                                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                ) : <Search className="w-3 h-3"/>}
+                                Show Path Map
                             </button>
                             <a href={`https://www.google.com/maps/dir/?api=1&origin=${record.checkInLocation.lat},${record.checkInLocation.lng}&destination=${record.checkOutLocation.lat},${record.checkOutLocation.lng}&travelmode=driving`} target="_blank" rel="noreferrer" className="bg-white text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-semibold text-center hover:bg-indigo-50 transition flex items-center justify-center gap-1 text-[10px]">
                                 <MapPin className="w-3 h-3"/> Google Route

@@ -58,7 +58,7 @@ export default function GlobalLocationTracker() {
       }
     };
 
-    localCheckInterval = setInterval(checkAndTrack, 5000);
+    localCheckInterval = setInterval(checkAndTrack, 30000);
     checkAndTrack();
 
     return () => {
