@@ -3,10 +3,9 @@ import axios from 'axios';
 import { Search, Plus, Edit2, Trash2, X, DollarSign } from 'lucide-react';
 import SalaryModal from '../components/SalaryModal';
 
-export default function Employees() {
-  const [employees, setEmployees] = useState([]);
+export default function Employees({ employees: globalEmployees, refreshEmployees }) {
+  const [employees, setEmployees] = useState(globalEmployees || []);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentEmployee, setCurrentEmployee] = useState(null);
   
@@ -20,19 +19,15 @@ export default function Employees() {
   const initialFormState = { name: '', role: 'Employee', contact: '', password: '', monthlySalary: '' };
   const [formData, setFormData] = useState(initialFormState);
 
-  const fetchEmployees = async () => {
-    try {
-      const res = await axios.get('/api/employees');
-      setEmployees(res.data);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (globalEmployees) {
+      setEmployees(globalEmployees);
     }
-  };
+  }, [globalEmployees]);
 
   useEffect(() => {
-    fetchEmployees();
+    // Silently refresh in background
+    if (refreshEmployees) refreshEmployees();
   }, []);
 
   const handleSearch = (e) => {
@@ -76,7 +71,7 @@ export default function Employees() {
         await axios.post('/api/employees', formData);
         alert('Employee added successfully!');
       }
-      fetchEmployees();
+      if (refreshEmployees) refreshEmployees();
       handleCloseModal();
     } catch (err) {
       console.error(err);
@@ -90,7 +85,7 @@ export default function Employees() {
     if (!window.confirm('Are you sure you want to delete this employee?')) return;
     try {
       await axios.delete(`/api/employees/${id}`);
-      fetchEmployees();
+      if (refreshEmployees) refreshEmployees();
     } catch (err) {
       console.error(err);
       alert('Failed to delete employee');
@@ -129,7 +124,7 @@ export default function Employees() {
           </div>
         </div>
 
-        {loading ? (
+        {!globalEmployees ? (
           <div className="p-8 text-center text-gray-500">Loading employees...</div>
         ) : (
           <div className="overflow-x-auto">

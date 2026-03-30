@@ -4,9 +4,8 @@ import { format } from 'date-fns';
 import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X } from 'lucide-react';
 import Skeleton from '../components/Skeleton';
 
-export default function Attendance() {
-  const [records, setRecords] = useState([]);
-  const [loading, setLoading] = useState(true);
+export default function Attendance({ records: globalRecords, refreshRecords }) {
+  const [records, setRecords] = useState(globalRecords || []);
   const [todayRecord, setTodayRecord] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [sessionSummary, setSessionSummary] = useState(null);
@@ -25,33 +24,13 @@ export default function Attendance() {
   const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
   const todayStr = format(nowIST, 'yyyy-MM-dd');
 
-  const fetchAttendance = async () => {
-    try {
-      // If admin, they could see all, but let's just make Attendance page user-specific or show all for admin
-      const endpoint = user.role === 'Admin' 
-        ? '/api/attendance'
-        : `/api/attendance?employeeId=${user.id}`;
-      
-      const res = await axios.get(endpoint);
-      // Sort desc by date, then checkIn time
-      const sortedRecords = res.data.sort((a, b) => {
-        if (a.date === b.date) {
-            return b.checkIn.localeCompare(a.checkIn);
-        }
-        return new Date(b.date) - new Date(a.date);
-      });
-      setRecords(sortedRecords);
-      
-      // Determine today's record for action buttons
-      const userTodayRecord = res.data.find(r => r.employeeId === user.id && r.date === todayStr);
+
+  useEffect(() => {
+    if (globalRecords) {
+      setRecords(globalRecords);
+      const userTodayRecord = globalRecords.find(r => r.employeeId === user.id && r.date === todayStr);
       setTodayRecord(userTodayRecord || null);
-
-      if (userTodayRecord && userTodayRecord.checkIn && !userTodayRecord.checkOut) {
-        localStorage.setItem('isCheckedIn', 'true');
-      } else {
-        localStorage.removeItem('isCheckedIn');
-      }
-
+      
       if (userTodayRecord) {
         setDistanceTraveled(userTodayRecord.distanceTraveled !== undefined ? userTodayRecord.distanceTraveled.toString() : '');
         setFoodExpense(userTodayRecord.foodExpense !== undefined ? userTodayRecord.foodExpense.toString() : '');
@@ -68,17 +47,13 @@ export default function Attendance() {
         setDistanceTraveled('');
         setFoodExpense('');
       }
-
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [globalRecords, user.id, todayStr]);
 
   useEffect(() => {
-    fetchAttendance();
-  }, [user.id, user.role]);
+    // Silently refresh global records in background on mount
+    if (refreshRecords) refreshRecords();
+  }, []);
 
 
 
@@ -169,8 +144,8 @@ export default function Attendance() {
           setTodayRecord(res.data);
           localStorage.setItem('isCheckedIn', 'true');
           
-          // Re-fetch to ensure history table is updated
-          fetchAttendance();
+          // Re-fetch global state to ensure history table is updated
+          if (refreshRecords) refreshRecords();
           
           // Auto-scroll to work details section after check-in
           setTimeout(() => {
@@ -254,7 +229,7 @@ export default function Attendance() {
       // Clear todayRecord or update it to reflect check-out for the button logic
       setTodayRecord(res.data);
       localStorage.removeItem('isCheckedIn');
-      fetchAttendance();
+      if (refreshRecords) refreshRecords();
     } catch (err) {
       console.error(err);
       alert(err.response?.data?.message || 'Failed to check-out');
@@ -279,7 +254,7 @@ export default function Attendance() {
         foodExpense: Number(foodExpense)
       });
       alert('Success! Your 10-point work details have been saved and sent to the admin.');
-      fetchAttendance();
+      if (refreshRecords) refreshRecords();
       // Optional: scroll back to top after saving
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
@@ -311,7 +286,7 @@ export default function Attendance() {
     }
   };
 
-  if (loading) {
+  if (!globalRecords) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         <div className="mb-8 text-left">
@@ -493,7 +468,7 @@ export default function Attendance() {
         <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
           <h3 className="text-lg font-medium text-gray-900 text-left">Attendance History</h3>
         </div>
-        {loading ? (
+        {!globalRecords ? (
           <div className="p-8 text-center text-gray-500">Loading records...</div>
         ) : (
           <div className="overflow-x-auto">

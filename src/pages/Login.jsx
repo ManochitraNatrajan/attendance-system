@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Droplets } from 'lucide-react';
 
@@ -7,6 +7,14 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [dbStatus, setDbStatus] = useState('checking');
+
+  useEffect(() => {
+    // Quick check to see if database is reachable
+    axios.get('/api/health')
+      .then(res => setDbStatus(res.data.status))
+      .catch(() => setDbStatus('offline'));
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -19,11 +27,16 @@ export default function Login() {
       const dbResponse = await axios.post('/api/login', { contact, password });
       if (dbResponse.data.success) {
         localStorage.setItem('user', JSON.stringify(dbResponse.data.user));
-        // Force hard redirect to reload state completely
         window.location.replace('/');
       }
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to connect to server');
+      console.error("Login attempt failed:", err);
+      const msg = err.response?.data?.message || 'Failed to connect to server';
+      if (dbStatus !== 'online') {
+          setError(msg + ' (Database appears to be offline)');
+      } else {
+          setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -44,6 +57,11 @@ export default function Login() {
           <p className="mt-2 text-sm text-gray-500 font-medium">Sign in to manage attendance</p>
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleLogin}>
+          {dbStatus === 'database_disconnected' && (
+            <div className="bg-yellow-50 text-yellow-700 p-3 rounded-xl text-xs border border-yellow-100 flex items-center gap-2 mb-4">
+              ⚠️ Database is currently offline. Sign-in may fail.
+            </div>
+          )}
           {error && (
             <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm bg-opacity-80 border border-red-100 flex items-center gap-2">
               <span className="block">{error}</span>

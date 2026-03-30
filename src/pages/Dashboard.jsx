@@ -1,57 +1,21 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { format } from 'date-fns';
 import { Users, UserCheck, UserX, Clock } from 'lucide-react';
 
 import Skeleton from '../components/Skeleton';
 
-export default function Dashboard() {
-  const [stats, setStats] = useState({ total: 0, present: 0, absent: 0 });
-  const [loading, setLoading] = useState(true);
+export default function Dashboard({ stats, refreshStats }) {
   const user = JSON.parse(localStorage.getItem('user'));
 
   useEffect(() => {
-    const fetchDashboardData = async () => {
-      try {
-        const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
-        const todayStr = format(nowIST, 'yyyy-MM-dd');
-        const [empRes, attRes] = await Promise.all([
-          axios.get('/api/employees'),
-          axios.get(`/api/attendance?date=${todayStr}`)
-        ]);
-
-        const totalEmployees = empRes.data.length;
-        const presentToday = attRes.data.length;
-
-        setStats({
-          total: totalEmployees,
-          present: presentToday,
-          absent: totalEmployees - presentToday
-        });
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchDashboardData();
+    // Silently refresh stats in the background on mount
+    if (refreshStats) refreshStats();
   }, []);
 
-  if (loading) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        <div className="mb-8">
-            <Skeleton className="h-10 w-48 mb-2" />
-            <Skeleton className="h-4 w-64" />
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}
-        </div>
-        <Skeleton className="h-48 w-full rounded-xl" />
-      </div>
-    );
-  }
+  // Use empty defaults if still null for some reason (fail-safe)
+  const currentStats = stats || { total: 0, present: 0, absent: 0 };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
@@ -63,21 +27,21 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <StatCard
           title="Total Employees"
-          value={stats.total}
+          value={currentStats.total}
           icon={Users}
           color="bg-blue-500"
           bgColor="bg-blue-50"
         />
         <StatCard
           title="Present Today"
-          value={stats.present}
+          value={currentStats.present}
           icon={UserCheck}
           color="bg-green-500"
           bgColor="bg-green-50"
         />
         <StatCard
           title="Absent Today"
-          value={stats.absent}
+          value={currentStats.absent}
           icon={UserX}
           color="bg-red-500"
           bgColor="bg-red-50"
@@ -95,13 +59,13 @@ export default function Dashboard() {
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
         <h2 className="text-xl font-semibold mb-4 text-left">Quick Actions</h2>
         <div className="flex gap-4 flex-wrap">
-          <a href="/attendance" className="px-4 py-2 bg-[var(--accent)] text-white rounded-lg hover:bg-purple-700 transition font-medium text-sm">
+          <Link to="/attendance" className="px-4 py-2 bg-[var(--accent)] text-white rounded-lg hover:bg-purple-700 transition font-medium text-sm">
             Mark Attendance
-          </a>
+          </Link>
           {user?.role === 'Admin' && (
-            <a href="/employees" className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition font-medium text-sm">
+            <Link to="/employees" className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition font-medium text-sm">
               Manage Employees
-            </a>
+            </Link>
           )}
         </div>
       </div>

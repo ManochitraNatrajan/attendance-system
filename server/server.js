@@ -114,19 +114,31 @@ const getTransporter = async () => {
 };
 
 // === Auth API ===
+app.get('/api/health', (req, res) => {
+  const isConnected = mongoose.connection.readyState === 1;
+  res.json({ status: isConnected ? 'online' : 'database_disconnected' });
+});
+
 app.post('/api/login', async (req, res) => {
   try {
     const { contact, password } = req.body;
-    const user = await Employee.findOne({ contact });
+    
+    // Diagnostic logging for login issues
+    const isConn = mongoose.connection.readyState === 1;
+    if (!isConn) console.error("LOGIN FAILED: Database not connected!");
+
+    const user = await Employee.findOne({ contact }).lean();
     
     if (user && (user.password === password || (!user.password && password === '123456'))) {
-      res.json({ success: true, user });
+      const plain = user;
+      plain.id = plain._id.toString();
+      res.json({ success: true, user: plain });
     } else {
       res.status(401).json({ success: false, message: 'Invalid credentials. User not found.' });
     }
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
+    console.error("LOGIN ERROR:", err);
+    res.status(500).json({ message: 'Server error: ' + (err.message || 'unknown') });
   }
 });
 
