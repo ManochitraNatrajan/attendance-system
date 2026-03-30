@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import Skeleton from '../components/Skeleton';
 import { format } from 'date-fns';
 import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X } from 'lucide-react';
-import Skeleton from '../components/Skeleton';
 
 export default function Attendance({ records: globalRecords, refreshRecords }) {
   const [records, setRecords] = useState(globalRecords || []);

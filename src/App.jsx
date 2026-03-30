@@ -1,10 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import axios from 'axios';
+import { format } from 'date-fns';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import GlobalLocationTracker from './components/GlobalLocationTracker';
 import LoadingScreen from './components/LoadingScreen';
-import { useState } from 'react';
 
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
@@ -88,7 +88,9 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (timerDone && dashboardStats && attendanceRecords && employeeList) {
+    // Both branding time and ALL data must be ready
+    if (timerDone && dashboardStats !== null && attendanceRecords !== null && employeeList !== null) {
+      console.log('All data ready, transitioning to dashboard...');
       setAppLoading(false);
     }
   }, [timerDone, dashboardStats, attendanceRecords, employeeList]);

@@ -34,11 +34,16 @@ export default function Employees({ employees: globalEmployees, refreshEmployees
     setSearch(e.target.value.toLowerCase());
   };
 
-  const filteredEmployees = employees.filter(emp => 
-    emp.name.toLowerCase().includes(search) || 
-    emp.contact.toLowerCase().includes(search) ||
-    emp.role.toLowerCase().includes(search)
-  );
+  const filteredEmployees = employees.filter(emp => {
+    const searchLower = search.toLowerCase();
+    const name = (emp.name || '').toLowerCase();
+    const contact = (emp.contact || '').toLowerCase();
+    const role = (emp.role || '').toLowerCase();
+    
+    return name.includes(searchLower) || 
+           contact.includes(searchLower) || 
+           role.includes(searchLower);
+  });
 
   const handleOpenModal = (employee = null) => {
     if (employee) {
