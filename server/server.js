@@ -86,7 +86,9 @@ app.use(cors());
 app.use(compression());
 app.use(express.json());
 
-// === OTP Storage ===
+// === Caching & OTP Storage ===
+const employeeCache = { data: null, lastFetched: 0 };
+const CACHE_TTL = 30000; // 30 seconds
 const otpStore = new Map();
 let etherealTransporter = null;
 const getTransporter = async () => {
@@ -130,7 +132,13 @@ app.post('/api/login', async (req, res) => {
 // === Employee API ===
 app.get('/api/employees', async (req, res) => {
   try {
-    const users = await Employee.find();
+    const now = Date.now();
+    if (employeeCache.data && (now - employeeCache.lastFetched < CACHE_TTL)) {
+      return res.json(employeeCache.data);
+    }
+    const users = await Employee.find().lean();
+    employeeCache.data = users;
+    employeeCache.lastFetched = now;
     res.json(users);
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
@@ -333,10 +341,15 @@ app.post('/api/attendance/live-location', async (req, res) => {
       { employeeId, date: today, checkOut: null },
       { 
         currentLocation: { lat: Number(lat), lng: Number(lng), timestamp: new Date() },
-        $push: { locationHistory: { lat: Number(lat), lng: Number(lng), timestamp: new Date() } }
+        $push: { 
+          locationHistory: { 
+            $each: [{ lat: Number(lat), lng: Number(lng), timestamp: new Date() }],
+            $slice: -200 // Keep last 200 points to prevent document bloating
+          } 
+        }
       },
       { new: true, select: '-locationHistory' }
-    );
+    ).lean();
     
     if (record) res.json({ success: true });
     else res.status(404).json({ message: 'No active shift found to sync.' });
@@ -429,11 +442,12 @@ app.get('/api/salary/:employeeId', async (req, res) => {
     
     const expectedWorkingDays = daysInMonth - sundays;
     
-    // Find attendance records for the month using Regex
+    // Find attendance records for the month using indexed range queries instead of RegExp
+    const nextMonth = month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
     const monthRecords = await Attendance.find({ 
       employeeId, 
-      date: new RegExp('^' + targetYearMonth) 
-    }).select('-locationHistory');
+      date: { $gte: targetYearMonth, $lt: nextMonth }
+    }).select('-locationHistory').lean();
     
     let totalDaysWorked = 0;
     let totalTravelExpense = 0;

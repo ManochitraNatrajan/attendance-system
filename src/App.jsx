@@ -14,7 +14,13 @@ function App() {
 
   useEffect(() => {
     // Keep-alive ping for Render free tier (every 14 mins)
-    const pingServer = () => axios.get('/api/ping').catch(() => {});
+    const pingServer = () => {
+      // Only ping if window is focused to save resources
+      if (document.visibilityState === 'visible') {
+        axios.get('/api/ping').catch(() => {});
+      }
+    };
+    
     pingServer();
     const interval = setInterval(pingServer, 14 * 60 * 1000);
     return () => clearInterval(interval);
