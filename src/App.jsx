@@ -3,6 +3,8 @@ import axios from 'axios';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import GlobalLocationTracker from './components/GlobalLocationTracker';
+import LoadingScreen from './components/LoadingScreen';
+import { useState } from 'react';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Login = lazy(() => import('./pages/Login'));
@@ -11,11 +13,16 @@ const Attendance = lazy(() => import('./pages/Attendance'));
 
 function App() {
   const user = JSON.parse(localStorage.getItem('user'));
+  const [appLoading, setAppLoading] = useState(true);
 
   useEffect(() => {
+    // 5-second hard loading as requested by user
+    const timer = setTimeout(() => {
+      setAppLoading(false);
+    }, 5000);
+
     // Keep-alive ping for Render free tier (every 14 mins)
     const pingServer = () => {
-      // Only ping if window is focused to save resources
       if (document.visibilityState === 'visible') {
         axios.get('/api/ping').catch(() => {});
       }
@@ -23,8 +30,13 @@ function App() {
     
     pingServer();
     const interval = setInterval(pingServer, 14 * 60 * 1000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timer);
+    };
   }, []);
+
+  if (appLoading) return <LoadingScreen />;
 
   return (
     <Router>

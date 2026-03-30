@@ -89,6 +89,7 @@ app.use(express.json());
 // === Caching & OTP Storage ===
 const employeeCache = { data: null, lastFetched: 0 };
 const CACHE_TTL = 30000; // 30 seconds
+const invalidateEmployeeCache = () => { employeeCache.data = null; employeeCache.lastFetched = 0; };
 const otpStore = new Map();
 let etherealTransporter = null;
 const getTransporter = async () => {
@@ -136,7 +137,7 @@ app.get('/api/employees', async (req, res) => {
     if (employeeCache.data && (now - employeeCache.lastFetched < CACHE_TTL)) {
       return res.json(employeeCache.data);
     }
-    const users = await Employee.find().lean();
+    const users = (await Employee.find().lean()).map(u => ({ ...u, id: u._id.toString() }));
     employeeCache.data = users;
     employeeCache.lastFetched = now;
     res.json(users);
@@ -196,7 +197,7 @@ app.post('/api/employees', async (req, res) => {
       password: req.body.password || '123456',
     });
     
-    // Welcome email has been disabled as requested
+    invalidateEmployeeCache();
     
     res.status(201).json(emp);
   } catch (err) {
@@ -212,6 +213,9 @@ app.put('/api/employees/:id', async (req, res) => {
     
     const emp = await Employee.findByIdAndUpdate(req.params.id, updateData, { new: true });
     if (!emp) return res.status(404).json({ message: 'Employee not found' });
+    
+    invalidateEmployeeCache();
+    
     res.json(emp);
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
@@ -223,6 +227,9 @@ app.delete('/api/employees/:id', async (req, res) => {
     await Employee.findByIdAndDelete(req.params.id);
     await Attendance.deleteMany({ employeeId: req.params.id });
     await SalaryHistory.deleteMany({ employeeId: req.params.id });
+    
+    invalidateEmployeeCache();
+    
     res.json({ message: 'Employee deleted successfully' });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
@@ -247,9 +254,10 @@ app.get('/api/attendance', async (req, res) => {
     
     const enrichedRecords = records.map(r => ({
       ...r,
+      id: r._id.toString(),
       employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
       role: r.employeeId ? r.employeeId.role : 'Unknown',
-      employeeId: r.employeeId ? r.employeeId._id : null
+      employeeId: r.employeeId ? r.employeeId._id.toString() : null
     }));
     
     res.json(enrichedRecords);
@@ -351,7 +359,11 @@ app.post('/api/attendance/live-location', async (req, res) => {
       { new: true, select: '-locationHistory' }
     ).lean();
     
-    if (record) res.json({ success: true });
+    if (record) {
+      const plain = record;
+      plain.id = plain._id.toString();
+      res.json({ success: true, record: plain });
+    }
     else res.status(404).json({ message: 'No active shift found to sync.' });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
@@ -410,9 +422,10 @@ app.get('/api/reports', async (req, res) => {
     const records = await Attendance.find().populate('employeeId').select('-locationHistory').lean();
     const enrichedRecords = records.map(r => ({
       ...r,
+      id: r._id.toString(),
       employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
       role: r.employeeId ? r.employeeId.role : 'Unknown',
-      employeeId: r.employeeId ? r.employeeId._id : null
+      employeeId: r.employeeId ? r.employeeId._id.toString() : null
     }));
     res.json(enrichedRecords);
   } catch (err) {
@@ -464,7 +477,8 @@ app.get('/api/salary/:employeeId', async (req, res) => {
     const dailyWage = monthlySalary / daysInMonth;
     const estimatedSalary = Math.round(paidDays * dailyWage);
 
-    const history = await SalaryHistory.find({ employeeId }).sort({ createdAt: -1 });
+    const history = (await SalaryHistory.find({ employeeId }).sort({ createdAt: -1 }).lean())
+      .map(h => ({ ...h, id: h._id.toString(), employeeId: h.employeeId.toString() }));
 
     res.json({
       currentMonth: {

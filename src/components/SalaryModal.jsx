@@ -4,21 +4,26 @@ import { format } from 'date-fns';
 import { X, Save, DollarSign, Edit, Check, Mail, Download, MessageCircle } from 'lucide-react';
 
 export default function SalaryModal({ employee, onClose }) {
+  const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [sendingEmail, setSendingEmail] = useState(null); // track sending id
-  const [editingHistory, setEditingHistory] = useState(null); // id of history being edited
+  const [sendingEmail, setSendingEmail] = useState(null); 
+  const [editingHistory, setEditingHistory] = useState(null);
   const [currentBonus, setCurrentBonus] = useState('');
   const [currentAdvance, setCurrentAdvance] = useState('');
 
   const fetchSalaryDetails = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`/api/salary/${employee.id}`);
+      setError(null);
+      const targetId = employee?.id || employee?._id;
+      if (!targetId) throw new Error("Employee ID is completely missing from current data.");
+      const res = await axios.get(`/api/salary/${targetId}`);
       setData(res.data);
     } catch (err) {
-      console.error(err);
+      console.error("Salary Fetch Error:", err);
+      setError(err.response?.data?.message || err.message || "Failed to load salary data.");
     } finally {
       setLoading(false);
     }
@@ -329,7 +334,11 @@ export default function SalaryModal({ employee, onClose }) {
               </div>
             </div>
           ) : (
-            <div className="text-center p-8 text-red-500">Failed to load salary data.</div>
+            <div className="text-center p-8 text-red-500 bg-red-50 rounded-xl m-4 border border-red-100 flex flex-col items-center gap-2">
+              <X className="w-8 h-8"/>
+              <p className="font-bold">{error || "Failed to load salary data."}</p>
+              <button onClick={fetchSalaryDetails} className="mt-2 text-sm bg-indigo-600 text-white px-4 py-1.5 rounded-lg">Retry</button>
+            </div>
           )}
         </div>
       </div>
