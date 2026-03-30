@@ -6,6 +6,11 @@ import nodemailer from 'nodemailer';
 import 'dotenv/config';
 import PDFDocument from 'pdfkit';
 import mongoose from 'mongoose';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // =======================
 // === MONGODB SCHEMAS ===
@@ -650,6 +655,17 @@ app.get('/api/salary/download-payslip/:recordId', async (req, res) => {
 });
 
 app.get('/api/ping', (req, res) => res.json({ status: 'ok' }));
+
+// === Serve Static Files in Production ===
+const distPath = path.join(__dirname, '../dist');
+app.use(express.static(distPath));
+
+// === Catch-all Route for SPA Navigation ===
+app.get('*', (req, res) => {
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(distPath, 'index.html'));
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
