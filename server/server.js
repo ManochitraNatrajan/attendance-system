@@ -41,9 +41,29 @@ const attendanceSchema = new mongoose.Schema({
   distanceTraveled: { type: Number, default: 0 },
   travelExpense: { type: Number, default: 0 },
   foodExpense: { type: Number, default: 0 },
-  workDetails: [{ type: String }]
+  workDetails: [{ type: String }],
+  routeTracking: {
+    startedAt: Date,
+    endedAt: Date,
+    startLocation: { latitude: Number, longitude: Number, city: String, timestamp: Date },
+    endLocation: { latitude: Number, longitude: Number, city: String, timestamp: Date },
+    locations: [{ latitude: Number, longitude: Number, city: String, timestamp: Date }],
+    stopPoints: [
+      {
+        city: String,
+        latitude: Number,
+        longitude: Number,
+        startTime: Date,
+        endTime: Date,
+        durationMinutes: Number
+      }
+    ],
+    totalDistanceKm: { type: Number, default: 0 }
+  }
 }, { timestamps: true });
 attendanceSchema.index({ date: 1, employeeId: 1 });
+attendanceSchema.index({ checkIn: 1 });
+attendanceSchema.index({ 'routeTracking.startedAt': 1 });
 attendanceSchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d, r) => { r.id = r._id.toString(); r.employeeId = r.employeeId.toString(); delete r._id; }});
 const Attendance = mongoose.model('Attendance', attendanceSchema);
 
@@ -256,18 +276,25 @@ app.delete('/api/employees/:id', async (req, res) => {
 // === Attendance API ===
 app.get('/api/attendance', async (req, res) => {
   try {
-    const { date, employeeId } = req.query;
+    const { date, employeeId, page, limit } = req.query;
     let query = {};
     if (date) query.date = date;
     if (employeeId) query.employeeId = employeeId;
     
-    // Default filter for last 30 days if no specific date
     if (!date && !employeeId) {
       const thirtyDaysAgoStr = new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0];
       query.date = { $gte: thirtyDaysAgoStr };
     }
     
-    const records = await Attendance.find(query).populate('employeeId').select('-locationHistory').lean();
+    let qBuilder = Attendance.find(query).populate('employeeId').select('-locationHistory -routeTracking').sort({ date: -1, checkIn: -1 });
+    
+    if (page || limit) {
+      const pg = parseInt(page) || 1;
+      const lmt = parseInt(limit) || 20;
+      qBuilder = qBuilder.skip((pg - 1) * lmt).limit(lmt);
+    }
+    
+    const records = await qBuilder.lean();
     
     const enrichedRecords = records.map(r => ({
       ...r,
@@ -367,13 +394,10 @@ app.post('/api/attendance/live-location', async (req, res) => {
       { 
         currentLocation: { lat: Number(lat), lng: Number(lng), timestamp: new Date() },
         $push: { 
-          locationHistory: { 
-            $each: [{ lat: Number(lat), lng: Number(lng), timestamp: new Date() }],
-            $slice: -200 // Keep last 200 points to prevent document bloating
-          } 
+          locationHistory: { lat: Number(lat), lng: Number(lng), timestamp: new Date() }
         }
       },
-      { new: true, select: '-locationHistory' }
+      { new: true, select: '-locationHistory -routeTracking' }
     ).lean();
     
     if (record) {
@@ -436,7 +460,7 @@ app.post('/api/attendance/check-out', async (req, res) => {
 // === Reports API ===
 app.get('/api/reports', async (req, res) => {
   try {
-    const records = await Attendance.find().populate('employeeId').select('-locationHistory').lean();
+    const records = await Attendance.find().populate('employeeId').select('-locationHistory -routeTracking').lean();
     const enrichedRecords = records.map(r => ({
       ...r,
       id: r._id.toString(),
@@ -477,7 +501,7 @@ app.get('/api/salary/:employeeId', async (req, res) => {
     const monthRecords = await Attendance.find({ 
       employeeId, 
       date: { $gte: targetYearMonth, $lt: nextMonth }
-    }).select('-locationHistory').lean();
+    }).select('-locationHistory -routeTracking').lean();
     
     let totalDaysWorked = 0;
     let totalTravelExpense = 0;
@@ -651,6 +675,179 @@ app.get('/api/salary/download-payslip/:recordId', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).send('Failed to download PDF');
+  }
+});
+
+// === Route Tracking API ===
+
+// Helper to calculate distance in KM
+const getDistanceKm = (lat1, lon1, lat2, lon2) => {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+app.post('/api/location/start', async (req, res) => {
+  try {
+    const { employeeId, latitude, longitude, city } = req.body;
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
+
+    const record = await Attendance.findOne({ employeeId, date: today });
+    if (!record) return res.status(404).json({ message: 'No check-in record found for today' });
+
+    record.routeTracking = {
+      startedAt: new Date(),
+      startLocation: { latitude: Number(latitude), longitude: Number(longitude), city: city || '', timestamp: new Date() },
+      locations: [{ latitude: Number(latitude), longitude: Number(longitude), city: city || '', timestamp: new Date() }],
+      totalDistanceKm: 0,
+      stopPoints: []
+    };
+
+    await record.save();
+    res.json({ success: true, routeTracking: record.routeTracking });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error starting location tracking' });
+  }
+});
+
+app.post('/api/location/update', async (req, res) => {
+  try {
+    const { employeeId, latitude, longitude, city } = req.body;
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
+
+    const record = await Attendance.findOne({ employeeId, date: today, checkOut: null });
+    if (!record) return res.status(404).json({ message: 'No active check-in record found for tracking' });
+    if (!record.routeTracking || !record.routeTracking.startedAt) {
+      return res.status(400).json({ message: 'Route tracking not initialized' });
+    }
+
+    const currentLoc = { latitude: Number(latitude), longitude: Number(longitude), city: city || '', timestamp: new Date() };
+
+    // Get last location
+    const locations = record.routeTracking.locations;
+    if (locations && locations.length > 0) {
+      const lastLoc = locations[locations.length - 1];
+      const distKm = getDistanceKm(lastLoc.latitude, lastLoc.longitude, currentLoc.latitude, currentLoc.longitude);
+      
+      // Stop logic detection: distance < 0.05 km (50m)
+      if (distKm < 0.05) {
+        // Calculate duration since we arrived at this spot
+        // We'll walk backwards from locations to find the first time we were at this ~spot
+        let stayStartTime = lastLoc.timestamp;
+        for (let i = locations.length - 1; i >= 0; i--) {
+          const l = locations[i];
+          if (getDistanceKm(l.latitude, l.longitude, currentLoc.latitude, currentLoc.longitude) < 0.05) {
+            stayStartTime = l.timestamp;
+          } else {
+            break;
+          }
+        }
+
+        const durationMinutes = (currentLoc.timestamp - new Date(stayStartTime)) / (1000 * 60);
+
+        if (durationMinutes >= 15) {
+          // It's a stop point. Check if we already recorded this stop.
+          const stops = record.routeTracking.stopPoints || [];
+          let activeStop = stops.length > 0 ? stops[stops.length - 1] : null;
+
+          // If last stop's end time is very close to current, we are just continuing the same stop
+          if (activeStop && (currentLoc.timestamp - new Date(activeStop.endTime)) / (1000 * 60) < 5) {
+             activeStop.endTime = currentLoc.timestamp;
+             activeStop.durationMinutes = (currentLoc.timestamp - new Date(activeStop.startTime)) / (1000 * 60);
+          } else {
+             // New stop point
+             record.routeTracking.stopPoints.push({
+               city: city || lastLoc.city,
+               latitude: currentLoc.latitude,
+               longitude: currentLoc.longitude,
+               startTime: stayStartTime,
+               endTime: currentLoc.timestamp,
+               durationMinutes: durationMinutes
+             });
+          }
+        }
+      }
+
+      // Add to total distance if we moved slightly
+      if (distKm >= 0.05) {
+         record.routeTracking.totalDistanceKm += distKm;
+      }
+    }
+
+    record.routeTracking.locations.push(currentLoc);
+
+    await record.save();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error updating location' });
+  }
+});
+
+app.post('/api/location/stop', async (req, res) => {
+  try {
+    const { employeeId, latitude, longitude, city } = req.body;
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
+
+    const record = await Attendance.findOne({ employeeId, date: today });
+    if (!record) return res.status(404).json({ message: 'No check-in record found' });
+    if (!record.routeTracking || !record.routeTracking.startedAt) {
+      return res.status(400).json({ message: 'Route tracking not initialized' });
+    }
+
+    // Only set end location if it's open
+    if (!record.routeTracking.endedAt) {
+       record.routeTracking.endLocation = {
+          latitude: Number(latitude),
+          longitude: Number(longitude),
+          city: city || '',
+          timestamp: new Date()
+       };
+       record.routeTracking.endedAt = new Date();
+       record.routeTracking.locations.push(record.routeTracking.endLocation);
+       
+       // Add final distance
+       const locations = record.routeTracking.locations;
+       if (locations.length >= 2) {
+         const preLast = locations[locations.length - 2];
+         const distKm = getDistanceKm(preLast.latitude, preLast.longitude, latitude, longitude);
+         if (distKm >= 0.05) {
+             record.routeTracking.totalDistanceKm += distKm;
+         }
+       }
+       await record.save();
+    }
+    
+    res.json({ success: true, routeTracking: record.routeTracking });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error stopping location tracking' });
+  }
+});
+
+app.get('/api/location/history/:employeeId/:date', async (req, res) => {
+  try {
+    const { employeeId, date } = req.params;
+    const record = await Attendance.findOne({ employeeId, date }).lean();
+    
+    if (!record || !record.routeTracking) {
+      return res.status(404).json({ message: 'No route history found' });
+    }
+    
+    res.json(record.routeTracking);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error fetching location history' });
   }
 });
 

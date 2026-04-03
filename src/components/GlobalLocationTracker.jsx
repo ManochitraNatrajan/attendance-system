@@ -63,12 +63,14 @@ export default function GlobalLocationTracker() {
 
             // SMART SYNC LOGIC:
             // Sync if:
-            // a) Moved > 50 meters
+            // a) Moved > 100 meters AND at least 2 mins passed
             // b) Or > 5 minutes since last sync
             const dist = getDistance(latitude, longitude, lastSyncRef.current.lat, lastSyncRef.current.lng);
             const timeDiff = now - lastSyncRef.current.time;
 
-            if (dist > 50 || timeDiff > 300000) {
+            if (dist > 100 && timeDiff > 120000) {
+              syncLocation(user, latitude, longitude);
+            } else if (timeDiff > 300000) {
               syncLocation(user, latitude, longitude);
             }
           },

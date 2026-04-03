@@ -82,8 +82,8 @@ export default function SalaryModal({ employee, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col relative z-[101]">
+    <div className="fixed inset-0 z-[99998] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col relative z-[99999]">
         <div className="px-6 py-4 flex justify-between items-center border-b border-gray-100 bg-gray-50/50">
           <div>
             <h3 className="text-2xl font-bold text-gray-900 flex items-center gap-2">

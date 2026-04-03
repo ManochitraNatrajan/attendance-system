@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import axios from 'axios';
 import Skeleton from '../components/Skeleton';
 import { format } from 'date-fns';
 import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X } from 'lucide-react';
+import RouteTrackingModal from '../components/RouteTrackingModal';
 
-export default function Attendance({ records: globalRecords, refreshRecords }) {
+const Attendance = memo(function Attendance({ records: globalRecords, refreshRecords }) {
   const [records, setRecords] = useState(globalRecords || []);
   const [todayRecord, setTodayRecord] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -19,6 +20,11 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
 
+  // Pagination states
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   
   const user = JSON.parse(localStorage.getItem('user'));
   const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
@@ -28,6 +34,8 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
   useEffect(() => {
     if (globalRecords) {
       setRecords(globalRecords);
+      setPage(1);
+      setHasMore(globalRecords.length >= 20);
       const userTodayRecord = globalRecords.find(r => r.employeeId === user.id && r.date === todayStr);
       setTodayRecord(userTodayRecord || null);
       
@@ -55,52 +63,36 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
     if (refreshRecords) refreshRecords();
   }, []);
 
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const endpoint = user.role === 'Admin' 
+         ? `/api/attendance?page=${nextPage}&limit=20`
+         : `/api/attendance?employeeId=${user.id}&page=${nextPage}&limit=20`;
+      
+      const res = await axios.get(endpoint);
+      if (res.data.length < 20) setHasMore(false);
+      
+      setRecords(prev => {
+         // Deduplicate records just in case
+         const existingIds = new Set(prev.map(r => r.id));
+         const newRecords = res.data.filter(r => !existingIds.has(r.id));
+         return [...prev, ...newRecords];
+      });
+      setPage(nextPage);
+    } catch (e) {
+      console.error("Failed to load more records", e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [page, hasMore, loadingMore, user.id, user.role]);
+
 
 
   useEffect(() => {
-    if (viewingMapFor && mapRef.current) {
-        // Initialize Leaflet map
-        if (mapInstanceRef.current) { mapInstanceRef.current.remove(); }
-        
-        const center = viewingMapFor.checkInLocation || viewingMapFor.checkOutLocation || { lat: 20.5937, lng: 78.9629 };
-        const map = window.L.map(mapRef.current).setView([center.lat, center.lng], 13);
-        mapInstanceRef.current = map;
-
-        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
-
-        // Path points
-        const points = [];
-        if (viewingMapFor.checkInLocation) points.push([viewingMapFor.checkInLocation.lat, viewingMapFor.checkInLocation.lng]);
-        
-        if (viewingMapFor.locationHistory && viewingMapFor.locationHistory.length > 0) {
-            viewingMapFor.locationHistory.forEach(p => points.push([p.lat, p.lng]));
-        }
-
-        if (viewingMapFor.checkOutLocation) points.push([viewingMapFor.checkOutLocation.lat, viewingMapFor.checkOutLocation.lng]);
-
-        if (points.length > 0) {
-            // Draw path (blue line)
-            window.L.polyline(points, { color: 'blue', weight: 4, opacity: 0.7 }).addTo(map);
-
-            // Add markers
-            if (viewingMapFor.checkInLocation) {
-                window.L.marker([viewingMapFor.checkInLocation.lat, viewingMapFor.checkInLocation.lng])
-                    .addTo(map)
-                    .bindPopup(`<b>Check-in:</b> ${viewingMapFor.checkInLocationName || 'Start'}`);
-            }
-            if (viewingMapFor.checkOutLocation) {
-                window.L.marker([viewingMapFor.checkOutLocation.lat, viewingMapFor.checkOutLocation.lng])
-                    .addTo(map)
-                    .bindPopup(`<b>Check-out:</b> ${viewingMapFor.checkOutLocationName || 'End'}`);
-            }
-
-            // Fit bounds
-            const bounds = window.L.latLngBounds(points);
-            map.fitBounds(bounds, { padding: [30, 30] });
-        }
-    }
+    // Left empty since RouteTrackingModal handles Leaflet now
   }, [viewingMapFor]);
 
 
@@ -140,6 +132,16 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
             longitude,
             locationName
           });
+
+          // Wait implicitly by using await for route start
+          try {
+             await axios.post('/api/location/start', {
+                employeeId: user.id, latitude, longitude, city: locationName
+             });
+          } catch (trackErr) {
+             console.error("Failed to start tracking", trackErr);
+          }
+
           // Update todayRecord directly for instant UI update
           setTodayRecord(res.data);
           localStorage.setItem('isCheckedIn', 'true');
@@ -226,6 +228,16 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
         foodExpense: Number(foodExpense) || 0,
         workDetails
       });
+
+      // Stop route tracking
+      try {
+         await axios.post('/api/location/stop', {
+            employeeId: user.id, latitude: finalLat, longitude: finalLng, city: locationName
+         });
+      } catch (trackErr) {
+         console.error("Failed to stop tracking", trackErr);
+      }
+
       // Clear todayRecord or update it to reflect check-out for the button logic
       setTodayRecord(res.data);
       localStorage.removeItem('isCheckedIn');
@@ -265,17 +277,16 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
     }
   };
 
-  const handleShowMap = async (record) => {
-    setMapLoading(true);
+  const handleShowMap = (record) => {
+    let formattedDate = record.date;
     try {
-      const res = await axios.get(`/api/attendance/${record.id}`);
-      setViewingMapFor(res.data);
-    } catch (err) {
-      console.error(err);
-      alert("Failed to load map data.");
-    } finally {
-      setMapLoading(false);
-    }
+      formattedDate = format(new Date(record.date), 'yyyy-MM-dd');
+    } catch (e) { console.error("Date error", e); }
+    setViewingMapFor({ 
+       employeeId: record.employeeId || user.id, 
+       date: formattedDate,
+       employeeName: record.employeeName || user.name
+    });
   };
 
   const handleAction = async (type) => {
@@ -342,6 +353,17 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
                 </span>
             )}
           </div>
+          
+          {/* Tracking indicator display */}
+          {todayRecord && !todayRecord.checkOut && (
+             <div className="mt-3 flex items-center gap-2 justify-center sm:justify-start pt-3 border-t border-gray-100">
+               <span className="relative flex h-3 w-3">
+                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                 <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+               </span>
+               <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Live Location Tracking Active</span>
+             </div>
+          )}
         </div>
         
         <div className="flex gap-4 w-full sm:w-auto">
@@ -486,7 +508,8 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {records.length > 0 ? records.map((record) => (
+                {useMemo(() => (
+                  records.length > 0 ? records.map((record) => (
                   <tr key={record.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-900">
                       {record.date}
@@ -512,13 +535,10 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
                            <div className="flex flex-col gap-2 mt-1.5">
                             <button 
                               onClick={() => handleShowMap(record)} 
-                              disabled={mapLoading}
-                              className="bg-indigo-600 text-white px-2 py-1.5 rounded-lg border border-indigo-700 font-bold text-center hover:bg-indigo-700 transition flex items-center justify-center gap-1 shadow-sm text-[10px] uppercase tracking-tighter disabled:opacity-50"
+                              className="bg-indigo-600 text-white px-2 py-1.5 rounded-lg border border-indigo-700 font-bold text-center hover:bg-indigo-700 transition flex items-center justify-center gap-1 shadow-sm text-[10px] uppercase tracking-tighter"
                             >
-                                {mapLoading ? (
-                                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                ) : <Search className="w-3 h-3"/>}
-                                Show Path Map
+                                <Search className="w-3 h-3"/>
+                                Route Tracking
                             </button>
                             <a href={`https://www.google.com/maps/dir/?api=1&origin=${record.checkInLocation.lat},${record.checkInLocation.lng}&destination=${record.checkOutLocation.lat},${record.checkOutLocation.lng}&travelmode=driving`} target="_blank" rel="noreferrer" className="bg-white text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-semibold text-center hover:bg-indigo-50 transition flex items-center justify-center gap-1 text-[10px]">
                                 <MapPin className="w-3 h-3"/> Google Route
@@ -570,9 +590,25 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
                       No attendance records found.
                     </td>
                   </tr>
-                )}
+                )
+                ), [records, user.role])}
               </tbody>
             </table>
+            
+            {hasMore && (
+              <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-center">
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="px-6 py-2 bg-white text-indigo-600 border border-indigo-200 rounded-full text-sm font-semibold hover:bg-indigo-50 transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
+                >
+                  {loadingMore ? (
+                    <><span className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span> Loading...</>
+                  ) : "Load More Records"}
+                </button>
+              </div>
+            )}
+            
           </div>
         )}
       </div>
@@ -612,43 +648,16 @@ export default function Attendance({ records: globalRecords, refreshRecords }) {
       )}
 
       {viewingMapFor && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col relative z-[101]">
-            <div className="px-6 py-4 flex justify-between items-center border-b border-gray-100 bg-gray-50/50">
-              <div>
-                <h3 className="text-xl font-bold text-gray-900">Attendance Path Map</h3>
-                <p className="text-sm text-gray-500">Employee: {viewingMapFor.employeeName} | Date: {viewingMapFor.date}</p>
-              </div>
-              <button onClick={() => setViewingMapFor(null)} className="text-gray-400 hover:text-gray-600 bg-white hover:bg-gray-100 rounded-full p-2 transition-colors border border-gray-200">
-                <X className="w-5 h-5"/>
-              </button>
-            </div>
-            <div className="p-6">
-                <div ref={mapRef} style={{ height: '400px', width: '100%', borderRadius: '12px', border: '1px solid #ddd' }}></div>
-                <div className="mt-4 flex justify-between text-xs text-gray-500 font-medium bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <div className="flex flex-col gap-1">
-                        <span className="text-blue-600 font-bold">START: {viewingMapFor.checkInLocationName || 'Unknown'}</span>
-                        <span>{viewingMapFor.checkIn}</span>
-                    </div>
-                    <div className="text-center flex flex-col gap-1">
-                        <span className="text-indigo-600 font-extrabold uppercase tracking-widest">{viewingMapFor.distanceTraveled || 0} KM TRACKED</span>
-                        <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full inline-block">Blue Line: Travel Path</span>
-                    </div>
-                    <div className="flex flex-col gap-1 text-right">
-                        <span className="text-green-600 font-bold">END: {viewingMapFor.checkOutLocationName || 'Unknown'}</span>
-                        <span>{viewingMapFor.checkOut}</span>
-                    </div>
-                </div>
-            </div>
-            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end">
-               <button onClick={() => setViewingMapFor(null)} className="px-5 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 transition">
-                  Close Map
-               </button>
-            </div>
-          </div>
-        </div>
+        <RouteTrackingModal 
+           employeeId={viewingMapFor.employeeId}
+           date={viewingMapFor.date}
+           employeeName={viewingMapFor.employeeName}
+           onClose={() => setViewingMapFor(null)}
+        />
       )}
 
     </div>
   );
-}
+});
+
+export default Attendance;

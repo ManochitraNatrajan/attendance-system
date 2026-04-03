@@ -29,8 +29,30 @@ const attendanceSchema = new mongoose.Schema({
   foodExpense: { type: Number, default: 0 },
   checkInLocationName: { type: String, default: '' },
   checkOutLocationName: { type: String, default: '' },
-  workDetails: [{ type: String }]
+  workDetails: [{ type: String }],
+  routeTracking: {
+    startedAt: Date,
+    endedAt: Date,
+    startLocation: { latitude: Number, longitude: Number, city: String, timestamp: Date },
+    endLocation: { latitude: Number, longitude: Number, city: String, timestamp: Date },
+    locations: [{ latitude: Number, longitude: Number, city: String, timestamp: Date }],
+    stopPoints: [
+      {
+        city: String,
+        latitude: Number,
+        longitude: Number,
+        startTime: Date,
+        endTime: Date,
+        durationMinutes: Number
+      }
+    ],
+    totalDistanceKm: { type: Number, default: 0 }
+  }
 }, { timestamps: true });
+
+attendanceSchema.index({ date: 1, employeeId: 1 });
+attendanceSchema.index({ checkIn: 1 });
+attendanceSchema.index({ 'routeTracking.startedAt': 1 });
 
 attendanceSchema.set('toJSON', {
   virtuals: true,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import axios from 'axios';
 import { format } from 'date-fns';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -6,10 +6,11 @@ import Navbar from './components/Navbar';
 import GlobalLocationTracker from './components/GlobalLocationTracker';
 import LoadingScreen from './components/LoadingScreen';
 
-import Dashboard from './pages/Dashboard';
-import Login from './pages/Login';
-import Employees from './pages/Employees';
-import Attendance from './pages/Attendance';
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Login = lazy(() => import('./pages/Login'));
+const Employees = lazy(() => import('./pages/Employees'));
+const Attendance = lazy(() => import('./pages/Attendance'));
+const RouteTracker = lazy(() => import('./components/RouteTracker'));
 
 function App() {
   const user = JSON.parse(localStorage.getItem('user'));
@@ -31,14 +32,16 @@ function App() {
       const todayStr = format(nowIST, 'yyyy-MM-dd');
       
       const attEndpoint = user.role === 'Admin' 
-        ? '/api/attendance'
-        : `/api/attendance?employeeId=${user.id}`;
+        ? '/api/attendance?limit=20'
+        : `/api/attendance?employeeId=${user.id}&limit=20`;
 
-      const [empRes, attStatsRes, attRecRes] = await Promise.all([
+      // Fetch dashboard critical stats first, delay heavy records list
+      const [empRes, attStatsRes] = await Promise.all([
         axios.get('/api/employees'),
-        axios.get(`/api/attendance?date=${todayStr}`),
-        axios.get(attEndpoint)
+        axios.get(`/api/attendance?date=${todayStr}`)
       ]);
+      
+      const attRecRes = await axios.get(attEndpoint);
 
       setDashboardStats({
         total: empRes.data.length,
@@ -100,14 +103,19 @@ function App() {
   return (
     <Router>
       <GlobalLocationTracker />
+      <Suspense fallback={null}>
+         <RouteTracker />
+      </Suspense>
       {user && <Navbar />}
         <div className="flex-1 overflow-auto bg-[var(--bg)] w-full h-full text-[var(--text)]">
-          <Routes>
-            <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
-            <Route path="/" element={user ? <Dashboard stats={dashboardStats} refreshStats={fetchGlobalData} /> : <Navigate to="/login" />} />
-            <Route path="/employees" element={user ? <Employees employees={employeeList} refreshEmployees={fetchGlobalData} /> : <Navigate to="/login" />} />
-            <Route path="/attendance" element={user ? <Attendance records={attendanceRecords} refreshRecords={fetchGlobalData} /> : <Navigate to="/login" />} />
-          </Routes>
+          <Suspense fallback={<LoadingScreen />}>
+            <Routes>
+              <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
+              <Route path="/" element={user ? <Dashboard stats={dashboardStats} refreshStats={fetchGlobalData} /> : <Navigate to="/login" />} />
+              <Route path="/employees" element={user ? <Employees employees={employeeList} refreshEmployees={fetchGlobalData} /> : <Navigate to="/login" />} />
+              <Route path="/attendance" element={user ? <Attendance records={attendanceRecords} refreshRecords={fetchGlobalData} /> : <Navigate to="/login" />} />
+            </Routes>
+          </Suspense>
         </div>
     </Router>
   );

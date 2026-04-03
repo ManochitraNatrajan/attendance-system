@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { format } from 'date-fns';
@@ -6,7 +6,7 @@ import { Users, UserCheck, UserX, Clock } from 'lucide-react';
 
 import Skeleton from '../components/Skeleton';
 
-export default function Dashboard({ stats, refreshStats }) {
+const Dashboard = memo(function Dashboard({ stats, refreshStats }) {
   const user = JSON.parse(localStorage.getItem('user'));
 
   useEffect(() => {
@@ -71,7 +71,9 @@ export default function Dashboard({ stats, refreshStats }) {
       </div>
     </div>
   );
-}
+});
+
+export default Dashboard;
 
 function StatCard({ title, value, icon: Icon, color, bgColor, isText }) {
   return (

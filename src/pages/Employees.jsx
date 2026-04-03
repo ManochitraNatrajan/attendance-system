@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import axios from 'axios';
 import { Search, Plus, Edit2, Trash2, X, DollarSign } from 'lucide-react';
 import SalaryModal from '../components/SalaryModal';
 
-export default function Employees({ employees: globalEmployees, refreshEmployees }) {
+const Employees = memo(function Employees({ employees: globalEmployees, refreshEmployees }) {
   const [employees, setEmployees] = useState(globalEmployees || []);
   const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const searchTimeoutRef = useRef(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [currentEmployee, setCurrentEmployee] = useState(null);
   
@@ -31,7 +33,13 @@ export default function Employees({ employees: globalEmployees, refreshEmployees
   }, []);
 
   const handleSearch = (e) => {
-    setSearch(e.target.value.toLowerCase());
+    const val = e.target.value;
+    setSearchInput(val);
+    
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      setSearch(val.toLowerCase());
+    }, 300);
   };
 
   const filteredEmployees = employees.filter(emp => {
@@ -123,7 +131,7 @@ export default function Employees({ employees: globalEmployees, refreshEmployees
               type="text"
               placeholder="Search employees..."
               className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[var(--accent)] focus:border-[var(--accent)] sm:text-sm transition"
-              value={search}
+              value={searchInput}
               onChange={handleSearch}
             />
           </div>
@@ -283,4 +291,6 @@ export default function Employees({ employees: globalEmployees, refreshEmployees
       )}
     </div>
   );
-}
+});
+
+export default Employees;
