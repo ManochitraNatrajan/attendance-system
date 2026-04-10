@@ -106,6 +106,43 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
     }
   };
 
+  const getExactLocation = () => {
+    return new Promise((resolve, reject) => {
+      let watchId;
+      let timeoutId;
+      let bestPos = null;
+
+      const finishOpts = () => {
+         if (timeoutId) clearTimeout(timeoutId);
+         if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
+      };
+
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          bestPos = pos;
+          if (pos.coords.accuracy <= 20) {
+            finishOpts();
+            resolve(pos);
+          }
+        },
+        (error) => {
+           if (!bestPos) {
+              finishOpts();
+              reject(error);
+           }
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      );
+
+      // Force resolve with best position after 10 seconds if <20m not achieved
+      timeoutId = setTimeout(() => {
+        finishOpts();
+        if (bestPos) resolve(bestPos);
+        else reject(new Error('Location timeout'));
+      }, 10000);
+    });
+  };
+
   const handleCheckIn = async () => {
     if (!navigator.geolocation) {
       alert('Geolocation is not supported by your browser');
@@ -113,60 +150,57 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
     }
 
     setActionLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        const checkInTimeStr = new Date().toISOString();
-        
-        localStorage.setItem(`checkIn_${user.id}_${todayStr}`, JSON.stringify({
-          checkInTime: checkInTimeStr,
-          latitude,
-          longitude
-        }));
+    try {
+      const position = await getExactLocation();
+      const { latitude, longitude } = position.coords;
+      const checkInTimeStr = new Date().toISOString();
+      
+      localStorage.setItem(`checkIn_${user.id}_${todayStr}`, JSON.stringify({
+        checkInTime: checkInTimeStr,
+        latitude,
+        longitude
+      }));
 
-        try {
-          const locationName = await fetchLocationName(latitude, longitude);
-          const res = await axios.post('/api/attendance/check-in', { 
-            employeeId: user.id,
-            latitude,
-            longitude,
-            locationName
-          });
+      const locationName = await fetchLocationName(latitude, longitude);
+      const res = await axios.post('/api/attendance/check-in', { 
+        employeeId: user.id,
+        latitude,
+        longitude,
+        locationName
+      });
 
-          // Wait implicitly by using await for route start
-          try {
-             await axios.post('/api/location/start', {
-                employeeId: user.id, latitude, longitude, city: locationName
-             });
-          } catch (trackErr) {
-             console.error("Failed to start tracking", trackErr);
-          }
-
-          // Update todayRecord directly for instant UI update
-          setTodayRecord(res.data);
-          localStorage.setItem('isCheckedIn', 'true');
-          
-          // Re-fetch global state to ensure history table is updated
-          if (refreshRecords) refreshRecords();
-          
-          // Auto-scroll to work details section after check-in
-          setTimeout(() => {
-            const el = document.getElementById('work-details-section');
-            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }, 500);
-
-        } catch (err) {
-          console.error(err);
-          alert(err.response?.data?.message || 'Failed to check-in');
-        } finally {
-          setActionLoading(false);
-        }
-      },
-      (error) => {
-        setActionLoading(false);
-        alert('Please allow location access to check in.');
+      // Wait implicitly by using await for route start
+      try {
+         await axios.post('/api/location/start', {
+            employeeId: user.id, latitude, longitude, city: locationName
+         });
+      } catch (trackErr) {
+         console.error("Failed to start tracking", trackErr);
       }
-    );
+
+      // Update todayRecord directly for instant UI update
+      setTodayRecord(res.data);
+      localStorage.setItem('isCheckedIn', 'true');
+      
+      // Re-fetch global state to ensure history table is updated
+      if (refreshRecords) refreshRecords();
+      
+      // Auto-scroll to work details section after check-in
+      setTimeout(() => {
+        const el = document.getElementById('work-details-section');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 500);
+
+    } catch (err) {
+      console.error(err);
+      if (err.message === 'Location timeout' || err.code === 1 || err.code === 2 || err.code === 3) {
+         alert('Please allow location access and ensure GPS is enabled to check in.');
+      } else {
+         alert(err.response?.data?.message || 'Failed to check-in');
+      }
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleCheckOut = async () => {
@@ -175,13 +209,20 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
     let finalLat = null;
     let finalLng = null;
     
-    const locStr = localStorage.getItem(`currentLoc_${user.id}`);
-    if (locStr) {
-       try {
-         const locObj = JSON.parse(locStr);
-         finalLat = locObj.lat;
-         finalLng = locObj.lng;
-       } catch (e) {}
+    try {
+      const position = await getExactLocation();
+      finalLat = position.coords.latitude;
+      finalLng = position.coords.longitude;
+    } catch (e) {
+      console.warn("Exact location failed on checkout, falling back if possible", e);
+      const locStr = localStorage.getItem(`currentLoc_${user.id}`);
+      if (locStr) {
+         try {
+           const locObj = JSON.parse(locStr);
+           finalLat = locObj.lat;
+           finalLng = locObj.lng;
+         } catch (err) {}
+      }
     }
 
     const checkOutTimeDate = new Date();
@@ -527,8 +568,22 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-500">
                       <div className="flex flex-col gap-1 text-xs">
-                        {record.checkInLocationName ? <a href={`https://www.google.com/maps?q=${record.checkInLocation.lat},${record.checkInLocation.lng}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 font-medium whitespace-normal">IN: {record.checkInLocationName}</a> : (record.checkInLocation ? <a href={`https://www.google.com/maps?q=${record.checkInLocation.lat},${record.checkInLocation.lng}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 flex items-center gap-1"><MapPin className="w-4 h-4" /> Start Loc</a> : null)}
-                        {record.checkOutLocationName ? <a href={`https://www.google.com/maps?q=${record.checkOutLocation.lat},${record.checkOutLocation.lng}`} target="_blank" rel="noreferrer" className="text-green-600 hover:text-green-800 font-medium whitespace-normal">OUT: {record.checkOutLocationName}</a> : (record.checkOutLocation ? <a href={`https://www.google.com/maps?q=${record.checkOutLocation.lat},${record.checkOutLocation.lng}`} target="_blank" rel="noreferrer" className="text-gray-600 hover:text-gray-900 flex items-center gap-1"><MapPin className="w-4 h-4" /> Final Loc</a> : null)}
+                        {record.checkInLocation && (
+                           <div className="mb-1">
+                             <a href={`https://www.google.com/maps?q=${record.checkInLocation.lat},${record.checkInLocation.lng}`} target="_blank" rel="noreferrer" className="text-blue-600 hover:text-blue-800 font-medium whitespace-normal flex flex-col">
+                               <span><MapPin className="w-3 h-3 inline mr-1"/>IN: {record.checkInLocationName || 'Start Loc'}</span>
+                               <span className="text-[9px] text-gray-400 font-mono mt-0.5">({record.checkInLocation.lat.toFixed(6)}, {record.checkInLocation.lng.toFixed(6)})</span>
+                             </a>
+                           </div>
+                        )}
+                        {record.checkOutLocation && (
+                           <div className="mb-1">
+                             <a href={`https://www.google.com/maps?q=${record.checkOutLocation.lat},${record.checkOutLocation.lng}`} target="_blank" rel="noreferrer" className="text-green-600 hover:text-green-800 font-medium whitespace-normal flex flex-col">
+                               <span><MapPin className="w-3 h-3 inline mr-1"/>OUT: {record.checkOutLocationName || 'Final Loc'}</span>
+                               <span className="text-[9px] text-gray-400 font-mono mt-0.5">({record.checkOutLocation.lat.toFixed(6)}, {record.checkOutLocation.lng.toFixed(6)})</span>
+                             </a>
+                           </div>
+                        )}
                         {record.currentLocation && !record.checkOut ? <a href={`https://www.google.com/maps?q=${record.currentLocation.lat},${record.currentLocation.lng}`} target="_blank" rel="noreferrer" className="text-red-500 hover:text-red-700 font-semibold flex items-center gap-1 animate-pulse"><MapPin className="w-4 h-4" /> LIVE</a> : null}
                         
                         {record.checkInLocation && record.checkOutLocation && (

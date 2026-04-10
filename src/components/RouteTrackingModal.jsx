@@ -171,24 +171,45 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                    <div ref={mapRef} style={{ height: 'calc(100% - 49px)', minHeight: '400px', width: '100%' }}></div>
                 </div>
 
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 shrink-0">
                    <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm text-center">
-                     <span className="text-gray-400 text-[10px] font-bold uppercase block mb-1">Started</span>
-                     <span className="text-gray-900 font-bold text-sm">{routeData.startedAt ? new Date(routeData.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</span>
+                     <span className="text-gray-400 text-[10px] font-bold uppercase block mb-1">Session</span>
+                     <span className="text-gray-900 font-bold text-[11px] whitespace-nowrap">{routeData.startedAt ? new Date(routeData.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'} to {routeData.endedAt ? new Date(routeData.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}</span>
                    </div>
-                   <div className="bg-white p-3 rounded-xl border border-gray-100 shadow-sm text-center">
-                     <span className="text-gray-400 text-[10px] font-bold uppercase block mb-1">Ended / Updated</span>
-                     <span className="text-gray-900 font-bold text-sm">{routeData.endedAt ? new Date(routeData.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : routeData.locations?.length > 0 ? new Date(routeData.locations[routeData.locations.length-1].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</span>
+                   <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 shadow-sm text-center flex flex-col justify-center">
+                     <span className="text-indigo-400 text-[10px] font-bold uppercase block mb-0.5">Total Distance</span>
+                     <span className="text-indigo-900 font-bold text-lg leading-none">{(routeData.totalDistanceKm || 0).toFixed(2)} km</span>
                    </div>
-                   <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 shadow-sm text-center">
-                     <span className="text-indigo-400 text-[10px] font-bold uppercase block mb-1">Total Distance</span>
-                     <span className="text-indigo-900 font-bold text-lg">{(routeData.totalDistanceKm || 0).toFixed(2)} km</span>
-                   </div>
-                   <div className="bg-orange-50 p-3 rounded-xl border border-orange-100 shadow-sm text-center">
-                     <span className="text-orange-400 text-[10px] font-bold uppercase block mb-1">Stop Points</span>
-                     <span className="text-orange-900 font-bold text-lg">{routeData.stopPoints?.length || 0}</span>
+                   <div className="bg-orange-50 p-3 rounded-xl border border-orange-100 shadow-sm text-center flex flex-col justify-center">
+                     <span className="text-orange-400 text-[10px] font-bold uppercase block mb-0.5">Stop Points</span>
+                     <span className="text-orange-900 font-bold text-lg leading-none">{routeData.stopPoints?.length || 0}</span>
                    </div>
                 </div>
+
+                {(() => {
+                   if (!routeData.startedAt) return null;
+                   const start = new Date(routeData.startedAt);
+                   const end = routeData.endedAt ? new Date(routeData.endedAt) : new Date();
+                   const diffMins = Math.floor((end - start) / (1000 * 60));
+                   const stopMins = Math.floor((routeData.stopPoints || []).reduce((acc, stop) => acc + (stop.durationMinutes || 0), 0));
+                   const travelMins = Math.max(0, diffMins - stopMins);
+                   return (
+                     <div className="grid grid-cols-3 gap-2 shrink-0 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                        <div className="text-center border-r border-gray-200">
+                           <span className="text-[10px] text-gray-500 font-bold uppercase block">Login Time</span>
+                           <span className="text-gray-900 font-bold text-sm">{Math.floor(diffMins/60)}h {diffMins%60}m</span>
+                        </div>
+                        <div className="text-center border-r border-gray-200">
+                           <span className="text-[10px] text-gray-500 font-bold uppercase block">Travel Time</span>
+                           <span className="text-blue-600 font-bold text-sm">{Math.floor(travelMins/60)}h {travelMins%60}m</span>
+                        </div>
+                        <div className="text-center">
+                           <span className="text-[10px] text-gray-500 font-bold uppercase block">Stopped Time</span>
+                           <span className="text-red-500 font-bold text-sm">{Math.floor(stopMins/60)}h {stopMins%60}m</span>
+                        </div>
+                     </div>
+                   );
+                })()}
               </div>
 
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col max-h-[600px] lg:max-h-full">
@@ -198,41 +219,78 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                 </div>
                 <div className="flex-1 overflow-y-auto p-6">
                    <div className="relative border-l-2 border-gray-200 ml-3 space-y-8">
-                      {routeData.startLocation && (
-                        <div className="relative pl-6">
-                          <div className="absolute w-4 h-4 bg-green-500 rounded-full border-4 border-green-100 -left-[9px] top-1"></div>
-                          <p className="text-xs text-gray-400 font-bold uppercase mb-0.5">{new Date(routeData.startLocation.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                          <h4 className="font-bold text-gray-900 text-sm">Started Journey</h4>
-                          <p className="text-xs text-gray-600 mt-1">{routeData.startLocation.city}</p>
-                        </div>
-                      )}
+                      {(() => {
+                         const timelineItems = [];
 
-                      {routeData.stopPoints?.map((stop, i) => (
-                        <div key={i} className="relative pl-6">
-                          <div className="absolute w-4 h-4 bg-red-500 rounded-full border-4 border-red-100 -left-[9px] top-1"></div>
-                          <p className="text-xs text-gray-400 font-bold uppercase mb-0.5">
-                            {new Date(stop.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - {new Date(stop.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </p>
-                          <h4 className="font-bold text-red-700 text-sm">Stop Detected ({Math.round(stop.durationMinutes)} mins)</h4>
-                          <p className="text-xs text-gray-600 mt-1">{stop.city}</p>
-                        </div>
-                      ))}
+                         if (routeData.travelSessions) {
+                            routeData.travelSessions.forEach((ts, i) => {
+                               timelineItems.push({
+                                  type: 'session',
+                                  timeStr: `${new Date(ts.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${ts.endTime ? new Date(ts.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}`,
+                                  title: `Travel Session ${i + 1}`,
+                                  subtitle: `${ts.startCity || 'Unknown'} → ${ts.endCity || 'Unknown'}`,
+                                  valueLine: `${(ts.distanceKm || 0).toFixed(2)} KM`,
+                                  timestamp: new Date(ts.startTime).getTime(),
+                                  durationMins: ts.endTime ? Math.floor((new Date(ts.endTime) - new Date(ts.startTime))/60000) : null
+                               });
+                            });
+                         }
 
-                      {routeData.endLocation ? (
-                        <div className="relative pl-6">
-                          <div className="absolute w-4 h-4 bg-gray-600 rounded-full border-4 border-gray-200 -left-[9px] top-1"></div>
-                          <p className="text-xs text-gray-400 font-bold uppercase mb-0.5">{new Date(routeData.endLocation.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                          <h4 className="font-bold text-gray-900 text-sm">Ended Journey</h4>
-                          <p className="text-xs text-gray-600 mt-1">{routeData.endLocation.city}</p>
-                        </div>
-                      ) : routeData.locations?.length > 0 ? (
-                        <div className="relative pl-6 opacity-75">
-                          <div className="absolute w-4 h-4 bg-blue-500 rounded-full border-4 border-blue-100 -left-[9px] top-1 animate-pulse"></div>
-                          <p className="text-xs text-blue-400 font-bold uppercase mb-0.5">{new Date(routeData.locations[routeData.locations.length-1].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                          <h4 className="font-bold text-blue-600 text-sm">Current Location</h4>
-                          <p className="text-xs text-gray-600 mt-1">{routeData.locations[routeData.locations.length-1].city}</p>
-                        </div>
-                      ) : null}
+                         if (routeData.stopPoints) {
+                            routeData.stopPoints.forEach((sp, i) => {
+                               timelineItems.push({
+                                  type: 'stop',
+                                  timeStr: `${new Date(sp.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${new Date(sp.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+                                  title: `Stop Detected`,
+                                  subtitle: sp.city || 'Unknown Location',
+                                  valueLine: `${Math.round(sp.durationMinutes)} mins`,
+                                  timestamp: new Date(sp.startTime).getTime()
+                               });
+                            });
+                         }
+                         
+                         timelineItems.sort((a, b) => a.timestamp - b.timestamp);
+
+                         return (
+                            <>
+                              {routeData.startLocation && (
+                                <div className="relative pl-6">
+                                  <div className="absolute w-4 h-4 bg-green-500 rounded-full border-4 border-green-100 -left-[9px] top-1"></div>
+                                  <p className="text-xs text-gray-400 font-bold uppercase mb-0.5">{new Date(routeData.startLocation.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                  <h4 className="font-bold text-gray-900 text-sm">Started Journey</h4>
+                                  <p className="text-xs text-gray-600 mt-1">{routeData.startLocation.city}</p>
+                                </div>
+                              )}
+
+                              {timelineItems.map((item, i) => (
+                                <div key={i} className="relative pl-6">
+                                  <div className={`absolute w-3 h-3 rounded-full border-2 -left-[7px] top-1.5 ${item.type === 'stop' ? 'bg-white border-red-500' : 'bg-white border-blue-500'}`}></div>
+                                  <p className="text-[10px] tracking-wide text-gray-400 font-bold uppercase mb-0.5">{item.timeStr}</p>
+                                  <h4 className={`font-bold text-sm flex gap-2 w-full pr-2 ${item.type === 'stop' ? 'text-red-700' : 'text-blue-700'}`}>
+                                     {item.title} <span className={`text-[10px] ml-auto self-center px-1.5 py-0.5 rounded font-black tracking-tight ${item.type === 'stop' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-700'}`}>{item.valueLine}</span>
+                                  </h4>
+                                  <p className="text-xs text-gray-600 mt-0.5">{item.subtitle}</p>
+                                </div>
+                              ))}
+
+                              {routeData.endLocation ? (
+                                <div className="relative pl-6">
+                                  <div className="absolute w-4 h-4 bg-gray-600 rounded-full border-4 border-gray-200 -left-[9px] top-1"></div>
+                                  <p className="text-xs text-gray-400 font-bold uppercase mb-0.5">{new Date(routeData.endLocation.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                  <h4 className="font-bold text-gray-900 text-sm">Ended Journey</h4>
+                                  <p className="text-xs text-gray-600 mt-1">{routeData.endLocation.city}</p>
+                                </div>
+                              ) : routeData.locations?.length > 0 ? (
+                                <div className="relative pl-6 opacity-75">
+                                  <div className="absolute w-4 h-4 bg-blue-500 rounded-full border-4 border-blue-100 -left-[9px] top-1 animate-pulse"></div>
+                                  <p className="text-xs text-blue-400 font-bold uppercase mb-0.5">{new Date(routeData.locations[routeData.locations.length-1].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                  <h4 className="font-bold text-blue-600 text-sm">Current Location</h4>
+                                  <p className="text-xs text-gray-600 mt-1">{routeData.locations[routeData.locations.length-1].city}</p>
+                                </div>
+                              ) : null}
+                            </>
+                         )
+                      })()}
                    </div>
                 </div>
               </div>

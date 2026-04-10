@@ -53,7 +53,7 @@ export default function GlobalLocationTracker() {
       if (watchIdRef.current === null && navigator.geolocation) {
         watchIdRef.current = navigator.geolocation.watchPosition(
           (pos) => {
-            const { latitude, longitude } = pos.coords;
+            const { latitude, longitude, accuracy } = pos.coords;
             const now = Date.now();
             
             // Update local storage for immediate UI needs
@@ -62,26 +62,23 @@ export default function GlobalLocationTracker() {
             }));
 
             // SMART SYNC LOGIC:
-            // Sync if:
-            // a) Moved > 100 meters AND at least 2 mins passed
-            // b) Or > 5 minutes since last sync
             const dist = getDistance(latitude, longitude, lastSyncRef.current.lat, lastSyncRef.current.lng);
             const timeDiff = now - lastSyncRef.current.time;
 
-            if (dist > 100 && timeDiff > 120000) {
-              syncLocation(user, latitude, longitude);
-            } else if (timeDiff > 300000) {
+            if (accuracy > 40 && timeDiff < 60000) return;
+
+            if (dist > 20 || timeDiff > 15000) {
               syncLocation(user, latitude, longitude);
             }
           },
           (err) => console.error("Location error:", err),
-          { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
       }
     };
 
-    // Run check every 30 seconds to ensure tracker is alive during active shift
-    checkInterval = setInterval(runTrackerLogic, 30000);
+    // Run check every 10 seconds to ensure tracker is alive during active shift
+    checkInterval = setInterval(runTrackerLogic, 10000);
     runTrackerLogic();
 
     return () => {

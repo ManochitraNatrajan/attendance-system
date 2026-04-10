@@ -737,14 +737,21 @@ app.post('/api/location/update', async (req, res) => {
       const lastLoc = locations[locations.length - 1];
       const distKm = getDistanceKm(lastLoc.latitude, lastLoc.longitude, currentLoc.latitude, currentLoc.longitude);
       
-      // Stop logic detection: distance < 0.05 km (50m)
-      if (distKm < 0.05) {
+      const timeDiffHours = (currentLoc.timestamp - lastLoc.timestamp) / (1000 * 60 * 60);
+      
+      // Spike detection: ignore unrealistic speeds > 150km/h
+      if (timeDiffHours > 0 && distKm > 0.05 && (distKm / timeDiffHours) > 150) {
+         return res.json({ success: true, message: 'Spike ignored' });
+      }
+
+      // Stop logic detection: distance < 0.02 km (20m)
+      if (distKm < 0.02) {
         // Calculate duration since we arrived at this spot
         // We'll walk backwards from locations to find the first time we were at this ~spot
         let stayStartTime = lastLoc.timestamp;
         for (let i = locations.length - 1; i >= 0; i--) {
           const l = locations[i];
-          if (getDistanceKm(l.latitude, l.longitude, currentLoc.latitude, currentLoc.longitude) < 0.05) {
+          if (getDistanceKm(l.latitude, l.longitude, currentLoc.latitude, currentLoc.longitude) < 0.02) {
             stayStartTime = l.timestamp;
           } else {
             break;
@@ -753,7 +760,7 @@ app.post('/api/location/update', async (req, res) => {
 
         const durationMinutes = (currentLoc.timestamp - new Date(stayStartTime)) / (1000 * 60);
 
-        if (durationMinutes >= 15) {
+        if (durationMinutes >= 5) {
           // It's a stop point. Check if we already recorded this stop.
           const stops = record.routeTracking.stopPoints || [];
           let activeStop = stops.length > 0 ? stops[stops.length - 1] : null;
@@ -777,7 +784,7 @@ app.post('/api/location/update', async (req, res) => {
       }
 
       // Add to total distance if we moved slightly
-      if (distKm >= 0.05) {
+      if (distKm >= 0.005) { // 5 meters filter to avoid accumulating jitter but keep slow movement
          record.routeTracking.totalDistanceKm += distKm;
       }
     }
@@ -821,7 +828,7 @@ app.post('/api/location/stop', async (req, res) => {
        if (locations.length >= 2) {
          const preLast = locations[locations.length - 2];
          const distKm = getDistanceKm(preLast.latitude, preLast.longitude, latitude, longitude);
-         if (distKm >= 0.05) {
+         if (distKm >= 0.005) { // 5 meters filter
              record.routeTracking.totalDistanceKm += distKm;
          }
        }
@@ -844,7 +851,90 @@ app.get('/api/location/history/:employeeId/:date', async (req, res) => {
       return res.status(404).json({ message: 'No route history found' });
     }
     
-    res.json(record.routeTracking);
+    const tracking = record.routeTracking;
+
+    // Dynamically build Travel Sessions
+    let sessions = [];
+    const stops = tracking.stopPoints || [];
+    const locations = tracking.locations || [];
+
+    if (locations.length > 0) {
+      let currentSession = {
+         startTime: tracking.startedAt || locations[0].timestamp,
+         startCity: tracking.startLocation ? tracking.startLocation.city : locations[0].city,
+         endTime: null,
+         endCity: '',
+         distanceKm: 0
+      };
+      
+      let stopIdx = 0;
+      let lastLoc = null;
+
+      for (const loc of locations) {
+         const locTime = new Date(loc.timestamp).getTime();
+         
+         // Fast-forward stops if loc is past them entirely
+         while (stopIdx < stops.length && locTime > new Date(stops[stopIdx].endTime).getTime()) {
+             if (currentSession.startTime && !currentSession.endTime) {
+                currentSession.endTime = stops[stopIdx].startTime;
+                currentSession.endCity = stops[stopIdx].city;
+                sessions.push({...currentSession});
+             }
+             currentSession = {
+                startTime: stops[stopIdx].endTime,
+                startCity: stops[stopIdx].city,
+                endTime: null,
+                endCity: '',
+                distanceKm: 0
+             };
+             stopIdx++;
+         }
+
+         // Are we exactly INSIDE the current stop?
+         if (stopIdx < stops.length && locTime >= new Date(stops[stopIdx].startTime).getTime() && locTime <= new Date(stops[stopIdx].endTime).getTime()) {
+             if (currentSession.startTime && !currentSession.endTime) {
+                currentSession.endTime = stops[stopIdx].startTime;
+                currentSession.endCity = stops[stopIdx].city;
+                sessions.push({...currentSession});
+                currentSession.startTime = null; // Mark as suspended
+             }
+             lastLoc = loc;
+             continue; // Don't add distance while stopped
+         }
+
+         // We are travelling
+         if (!currentSession.startTime) {
+             currentSession = {
+                startTime: loc.timestamp,
+                startCity: loc.city || '',
+                endTime: null,
+                endCity: '',
+                distanceKm: 0
+             };
+         }
+
+         if (lastLoc) {
+            const d = getDistanceKm(lastLoc.latitude, lastLoc.longitude, loc.latitude, loc.longitude);
+            if (d >= 0.005) {
+                currentSession.distanceKm += d;
+            }
+         }
+         lastLoc = loc;
+      }
+
+      if (currentSession.startTime && !currentSession.endTime) {
+         currentSession.endTime = tracking.endedAt || (lastLoc ? lastLoc.timestamp : new Date());
+         currentSession.endCity = tracking.endLocation ? tracking.endLocation.city : (lastLoc ? lastLoc.city : '');
+         sessions.push({...currentSession});
+      }
+      
+      tracking.travelSessions = sessions.filter(s => {
+          const mins = (new Date(s.endTime) - new Date(s.startTime)) / 60000;
+          return s.distanceKm >= 0.01 || mins >= 1;
+      });
+    }
+
+    res.json(tracking);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error fetching location history' });

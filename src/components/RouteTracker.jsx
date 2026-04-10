@@ -60,27 +60,27 @@ export default function RouteTracker() {
       if (watchIdRef.current === null && navigator.geolocation) {
         watchIdRef.current = navigator.geolocation.watchPosition(
           (pos) => {
-            const { latitude, longitude } = pos.coords;
+            const { latitude, longitude, accuracy } = pos.coords;
             const now = Date.now();
             
-            // Sync minimally every 2 minutes or 100 meters
             const timeDiff = now - lastSyncRef.current.time;
             const dist = getDistance(latitude, longitude, lastSyncRef.current.lat, lastSyncRef.current.lng);
 
-            // Sync if moved > 100m AND at least 2 mins passed, OR if > 5 minutes passed (heartbeat)
-            if (dist > 100 && timeDiff > 120000) {
-               syncLocation(user, latitude, longitude);
-            } else if (timeDiff > 300000) {
+            // Ignore low accuracy jumps unless it's been a minute
+            if (accuracy > 40 && timeDiff < 60000) return;
+
+            // Sync minimally every 10-15 seconds or 20 meters
+            if (dist > 20 || timeDiff > 15000) {
                syncLocation(user, latitude, longitude);
             }
           },
           (err) => console.error("RouteTracker location error:", err),
-          { enableHighAccuracy: false, timeout: 15000, maximumAge: 60000 }
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
       }
     };
 
-    checkInterval = setInterval(runTrackerLogic, 30000); // verify tracker is active
+    checkInterval = setInterval(runTrackerLogic, 10000); // verify tracker is active
     runTrackerLogic();
 
     return () => {
