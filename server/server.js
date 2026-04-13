@@ -58,7 +58,17 @@ const attendanceSchema = new mongoose.Schema({
         durationMinutes: Number
       }
     ],
-    totalDistanceKm: { type: Number, default: 0 }
+    geofenceEvents: [
+      {
+        zoneName: String,
+        action: String, // 'ENTER' or 'EXIT'
+        timestamp: Date
+      }
+    ],
+    sessionCount: { type: Number, default: 0 },
+    totalDistanceKm: { type: Number, default: 0 },
+    totalTravelMinutes: { type: Number, default: 0 },
+    totalStopMinutes: { type: Number, default: 0 }
   }
 }, { timestamps: true });
 attendanceSchema.index({ date: 1, employeeId: 1 });
@@ -83,6 +93,15 @@ const salaryHistorySchema = new mongoose.Schema({
 salaryHistorySchema.index({ employeeId: 1, month: -1 });
 salaryHistorySchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d, r) => { r.id = r._id.toString(); r.employeeId = r.employeeId.toString(); delete r._id; }});
 const SalaryHistory = mongoose.model('SalaryHistory', salaryHistorySchema);
+
+const geofenceZoneSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  latitude: { type: Number, required: true },
+  longitude: { type: Number, required: true },
+  radius: { type: Number, default: 100 } // radius in meters
+}, { timestamps: true });
+geofenceZoneSchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d, r) => { r.id = r._id.toString(); delete r._id; }});
+const GeofenceZone = mongoose.model('GeofenceZone', geofenceZoneSchema);
 // =======================
 
 const app = express();
@@ -938,6 +957,126 @@ app.get('/api/location/history/:employeeId/:date', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Server error fetching location history' });
+  }
+});
+
+app.post('/api/location/sync', async (req, res) => {
+  try {
+    const { employeeId, locations: offlineLocations } = req.body;
+    if (!offlineLocations || !offlineLocations.length) return res.json({ success: true, message: 'No points to sync' });
+    
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
+
+    const record = await Attendance.findOne({ employeeId, date: today });
+    if (!record || !record.routeTracking || !record.routeTracking.startedAt) {
+      return res.status(404).json({ message: 'No active session found for sync' });
+    }
+
+    // Sort received points by time
+    const sorted = offlineLocations.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    
+    for (const loc of sorted) {
+      const currentLoc = { latitude: Number(loc.latitude), longitude: Number(loc.longitude), city: loc.city || '', timestamp: new Date(loc.timestamp) };
+      const locations = record.routeTracking.locations;
+      
+      if (locations && locations.length > 0) {
+        const lastLoc = locations[locations.length - 1];
+        // Time order check: Ensure we do not add old points if a newer point exists
+        if (currentLoc.timestamp <= lastLoc.timestamp) continue;
+
+        const distKm = getDistanceKm(lastLoc.latitude, lastLoc.longitude, currentLoc.latitude, currentLoc.longitude);
+        const timeDiffHours = (currentLoc.timestamp - lastLoc.timestamp) / (1000 * 60 * 60);
+        
+        if (timeDiffHours > 0 && distKm > 0.05 && (distKm / timeDiffHours) > 150) {
+           continue; // Spike
+        }
+
+        if (distKm < 0.02) {
+          let stayStartTime = lastLoc.timestamp;
+          for (let i = locations.length - 1; i >= 0; i--) {
+            if (getDistanceKm(locations[i].latitude, locations[i].longitude, currentLoc.latitude, currentLoc.longitude) < 0.02) {
+              stayStartTime = locations[i].timestamp;
+            } else {
+              break;
+            }
+          }
+          const durationMinutes = (currentLoc.timestamp - new Date(stayStartTime)) / (1000 * 60);
+
+          if (durationMinutes >= 5) {
+            const stops = record.routeTracking.stopPoints || [];
+            let activeStop = stops.length > 0 ? stops[stops.length - 1] : null;
+
+            if (activeStop && (currentLoc.timestamp - new Date(activeStop.endTime)) / (1000 * 60) < 5) {
+               activeStop.endTime = currentLoc.timestamp;
+               activeStop.durationMinutes = (currentLoc.timestamp - new Date(activeStop.startTime)) / (1000 * 60);
+            } else {
+               record.routeTracking.stopPoints.push({
+                 city: currentLoc.city || lastLoc.city,
+                 latitude: currentLoc.latitude,
+                 longitude: currentLoc.longitude,
+                 startTime: stayStartTime,
+                 endTime: currentLoc.timestamp,
+                 durationMinutes: durationMinutes
+               });
+            }
+          }
+        }
+
+        if (distKm >= 0.005) {
+           record.routeTracking.totalDistanceKm += distKm;
+        }
+      }
+      record.routeTracking.locations.push(currentLoc);
+    }
+    await record.save();
+    res.json({ success: true, syncedCount: sorted.length });
+  } catch (err) {
+    console.error('Offline sync error', err);
+    res.status(500).json({ message: 'Server error syncing offline locations' });
+  }
+});
+
+// Geofencing Endpoints
+app.get('/api/geofence', async (req, res) => {
+  try {
+    const zones = await GeofenceZone.find().lean();
+    res.json(zones);
+  } catch (e) {
+    res.status(500).json({ message: 'Error fetching geofences' });
+  }
+});
+
+app.post('/api/geofence', async (req, res) => {
+  try {
+    const zone = await GeofenceZone.create(req.body);
+    res.status(201).json(zone);
+  } catch (e) {
+    res.status(500).json({ message: 'Error creating geofence' });
+  }
+});
+
+app.post('/api/geofence/event', async (req, res) => {
+  try {
+    const { employeeId, zoneName, action, timestamp } = req.body;
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
+    
+    // We update the active route tracking with this event
+    const record = await Attendance.findOne({ employeeId, date: today, checkOut: null });
+    if (!record) return res.status(404).json({ message: 'No active session' });
+    
+    if (!record.routeTracking.geofenceEvents) record.routeTracking.geofenceEvents = [];
+    
+    record.routeTracking.geofenceEvents.push({
+       zoneName,
+       action,
+       timestamp: timestamp ? new Date(timestamp) : new Date()
+    });
+    await record.save();
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ message: 'Error logging geofence event' });
   }
 });
 

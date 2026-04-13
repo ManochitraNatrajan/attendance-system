@@ -4,6 +4,9 @@ import Skeleton from '../components/Skeleton';
 import { format } from 'date-fns';
 import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X } from 'lucide-react';
 import RouteTrackingModal from '../components/RouteTrackingModal';
+import { LocationTracker } from '../services/LocationTracker';
+
+let activeLocationTracker = null;
 
 const Attendance = memo(function Attendance({ records: globalRecords, refreshRecords }) {
   const [records, setRecords] = useState(globalRecords || []);
@@ -50,6 +53,13 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         } else {
             setWorkDetails(Array(10).fill(''));
         }
+        
+        // Start tracking if checked in but not checked out (resume session)
+        if (!userTodayRecord.checkOut && !activeLocationTracker) {
+             activeLocationTracker = new LocationTracker(user.id);
+             activeLocationTracker.startTracking();
+        }
+        
       } else {
         setWorkDetails(Array(10).fill(''));
         setDistanceTraveled('');
@@ -100,7 +110,9 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   const fetchLocationName = async (lat, lng) => {
     try {
       const res = await axios.get(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-      return res.data?.address?.city || res.data?.address?.town || res.data?.address?.county || res.data?.address?.village || 'Local Area';
+      const address = res.data?.address;
+      if (!address) return 'Local Area';
+      return address.sublocality || address.locality || address.neighborhood || address.neighbourhood || address.village || address.hamlet || address.suburb || address.area || address.route || address.town || address.county || 'Local Area';
     } catch {
       return '';
     }
@@ -174,6 +186,10 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
          await axios.post('/api/location/start', {
             employeeId: user.id, latitude, longitude, city: locationName
          });
+         
+         // Start Native Capacitor Tracking
+         activeLocationTracker = new LocationTracker(user.id);
+         await activeLocationTracker.startTracking();
       } catch (trackErr) {
          console.error("Failed to start tracking", trackErr);
       }
@@ -275,6 +291,11 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
          await axios.post('/api/location/stop', {
             employeeId: user.id, latitude: finalLat, longitude: finalLng, city: locationName
          });
+         
+         if (activeLocationTracker) {
+            await activeLocationTracker.stopTracking();
+            activeLocationTracker = null;
+         }
       } catch (trackErr) {
          console.error("Failed to stop tracking", trackErr);
       }

@@ -248,6 +248,19 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                                });
                             });
                          }
+
+                         if (routeData.geofenceEvents) {
+                            routeData.geofenceEvents.forEach((ge) => {
+                               timelineItems.push({
+                                  type: 'geofence',
+                                  timeStr: new Date(ge.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                                  title: `Zone ${ge.action}`,
+                                  subtitle: ge.zoneName,
+                                  valueLine: ge.action,
+                                  timestamp: new Date(ge.timestamp).getTime()
+                               });
+                            });
+                         }
                          
                          timelineItems.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -264,10 +277,10 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
 
                               {timelineItems.map((item, i) => (
                                 <div key={i} className="relative pl-6">
-                                  <div className={`absolute w-3 h-3 rounded-full border-2 -left-[7px] top-1.5 ${item.type === 'stop' ? 'bg-white border-red-500' : 'bg-white border-blue-500'}`}></div>
+                                  <div className={`absolute w-3 h-3 rounded-full border-2 -left-[7px] top-1.5 ${item.type === 'stop' ? 'bg-white border-red-500' : item.type === 'geofence' ? 'bg-purple-500 border-purple-200' : 'bg-white border-blue-500'}`}></div>
                                   <p className="text-[10px] tracking-wide text-gray-400 font-bold uppercase mb-0.5">{item.timeStr}</p>
-                                  <h4 className={`font-bold text-sm flex gap-2 w-full pr-2 ${item.type === 'stop' ? 'text-red-700' : 'text-blue-700'}`}>
-                                     {item.title} <span className={`text-[10px] ml-auto self-center px-1.5 py-0.5 rounded font-black tracking-tight ${item.type === 'stop' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-700'}`}>{item.valueLine}</span>
+                                  <h4 className={`font-bold text-sm flex gap-2 w-full pr-2 ${item.type === 'stop' ? 'text-red-700' : item.type === 'geofence' ? 'text-purple-700' : 'text-blue-700'}`}>
+                                     {item.title} <span className={`text-[10px] ml-auto self-center px-1.5 py-0.5 rounded font-black tracking-tight ${item.type === 'stop' ? 'bg-red-50 text-red-600' : item.type === 'geofence' ? 'bg-purple-100 text-purple-800' : 'bg-blue-50 text-blue-700'}`}>{item.valueLine}</span>
                                   </h4>
                                   <p className="text-xs text-gray-600 mt-0.5">{item.subtitle}</p>
                                 </div>
