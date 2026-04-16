@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import axios from 'axios';
 import Skeleton from '../components/Skeleton';
 import { format } from 'date-fns';
-import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X } from 'lucide-react';
+import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X, Activity } from 'lucide-react';
 import RouteTrackingModal from '../components/RouteTrackingModal';
 import { LocationTracker } from '../services/LocationTracker';
 
@@ -304,10 +304,23 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   };
 
   const handleShowMap = (record) => {
-    let formattedDate = record.date;
+    if (!record) return;
+    
+    // Robust date parsing
+    let formattedDate = '';
     try {
-      formattedDate = format(new Date(record.date), 'yyyy-MM-dd');
-    } catch (e) { console.error("Date error", e); }
+      if (typeof record.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(record.date)) {
+        formattedDate = record.date;
+      } else {
+        formattedDate = format(new Date(record.date), 'yyyy-MM-dd');
+      }
+    } catch (e) { 
+      console.error("Date error in handleShowMap:", e);
+      formattedDate = todayStr; // Fallback to today
+    }
+
+    console.log(`[UI] Opening map for ${record.employeeName || user.name} on ${formattedDate}`);
+    
     setViewingMapFor({ 
        employeeId: record.employeeId || user.id, 
        date: formattedDate,
@@ -519,7 +532,100 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         {!globalRecords ? (
           <div className="p-8 text-center text-gray-500">Loading records...</div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            <div className="md:hidden">
+            {records.length > 0 ? records.map((record) => (
+              <div key={record.id} className="p-4 border-b border-gray-100 last:border-0 bg-white hover:bg-gray-50 transition-colors">
+                <div className="flex justify-between items-start mb-3">
+                  <div className="text-left">
+                    <p className="text-sm font-bold text-gray-900">{record.date}</p>
+                    {user.role === 'Admin' && <p className="text-xs text-indigo-600 font-semibold mt-0.5">{record.employeeName}</p>}
+                  </div>
+                  <span className={`px-2.5 py-1 text-[10px] uppercase tracking-wider font-black rounded-full shadow-sm ${
+                    record.status === 'Present' ? 'bg-green-500 text-white' : 
+                    record.status === 'Half Day Present' ? 'bg-orange-400 text-white' : 
+                    'bg-red-500 text-white'
+                  }`}>
+                    {record.status}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                   <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                      <p className="text-[10px] text-gray-400 uppercase font-black mb-1">Check In</p>
+                      <p className="text-sm font-bold text-gray-700">{record.checkIn || '--:--'}</p>
+                   </div>
+                   <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                      <p className="text-[10px] text-gray-400 uppercase font-black mb-1">Check Out</p>
+                      <p className="text-sm font-bold text-gray-700">{record.checkOut || '--:--'}</p>
+                   </div>
+                </div>
+
+                <div className="space-y-3 mb-4">
+                   <div className="flex flex-col gap-2">
+                     {record.checkInLocation && (
+                        <a href={`https://www.google.com/maps?q=${record.checkInLocation.lat},${record.checkInLocation.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-2 rounded-lg bg-blue-50/50 border border-blue-100/50">
+                           <div className="bg-blue-500 p-2 rounded-lg"><MapPin className="w-4 h-4 text-white"/></div>
+                           <div className="flex flex-col text-left">
+                              <span className="text-xs font-bold text-blue-700 truncate">IN: {record.checkInLocationName || 'Start Loc'}</span>
+                              <span className="text-[10px] text-blue-400 font-mono italic">View on Google Maps</span>
+                           </div>
+                        </a>
+                     )}
+                     {record.checkOutLocation && (
+                        <a href={`https://www.google.com/maps?q=${record.checkOutLocation.lat},${record.checkOutLocation.lng}`} target="_blank" rel="noreferrer" className="flex items-center gap-3 p-2 rounded-lg bg-emerald-50/50 border border-emerald-100/50">
+                           <div className="bg-emerald-500 p-2 rounded-lg"><MapPin className="w-4 h-4 text-white"/></div>
+                           <div className="flex flex-col text-left">
+                              <span className="text-xs font-bold text-emerald-700 truncate">OUT: {record.checkOutLocationName || 'Final Loc'}</span>
+                              <span className="text-[10px] text-emerald-400 font-mono italic">View on Google Maps</span>
+                           </div>
+                        </a>
+                     )}
+                     {record.currentLocation && !record.checkOut && (
+                        <div className="flex items-center gap-3 p-2 rounded-lg bg-red-50 border border-red-100 animate-pulse">
+                           <div className="bg-red-500 p-2 rounded-lg"><Activity className="w-4 h-4 text-white"/></div>
+                           <div className="text-left"><span className="text-xs font-black text-red-600 uppercase tracking-widest">Employee is Live</span></div>
+                        </div>
+                     )}
+                   </div>
+
+                   <div className="flex flex-wrap gap-2">
+                      <div className="bg-gray-100 px-3 py-1.5 rounded-lg flex items-center gap-2 border border-gray-200">
+                         <span className="text-[10px] font-black text-gray-400 uppercase">Dist:</span>
+                         <span className="text-xs font-extrabold text-gray-700">{record.distanceTraveled || 0} km</span>
+                      </div>
+                      <div className="bg-indigo-50 px-3 py-1.5 rounded-lg flex items-center gap-2 border border-indigo-100">
+                         <span className="text-[10px] font-black text-indigo-400 uppercase">Earn:</span>
+                         <span className="text-xs font-extrabold text-indigo-700">₹{record.travelExpense || 0}</span>
+                      </div>
+                   </div>
+                </div>
+
+                <div className="flex gap-2">
+                   {record.checkInLocation && (
+                      <button 
+                        onClick={() => handleShowMap(record)} 
+                        className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold text-sm shadow-md shadow-indigo-200 active:scale-95 transition-all flex items-center justify-center gap-2"
+                      >
+                        <Search className="w-4 h-4"/> ROUTE TRACKING
+                      </button>
+                   )}
+                   {user.role === 'Admin' && record.workDetails?.some(w => w.trim()) && (
+                      <button 
+                        onClick={() => setViewingDetailsFor(record)}
+                        className="bg-white text-indigo-600 border-2 border-indigo-600 px-4 py-3 rounded-xl font-bold text-sm active:scale-95 transition-all"
+                      >
+                        DETAILS
+                      </button>
+                   )}
+                </div>
+              </div>
+            )) : (
+              <div className="p-8 text-center text-gray-500">No records found.</div>
+            )}
+          </div>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -537,11 +643,11 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                 {useMemo(() => (
                   records.length > 0 ? records.map((record) => (
                   <tr key={record.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-900 font-bold">
                       {record.date}
                     </td>
                     {user.role === 'Admin' && (
-                       <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-900 font-medium">
+                       <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-indigo-600 font-bold">
                         {record.employeeName}
                       </td>
                     )}
@@ -571,18 +677,20 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                         )}
                         {record.currentLocation && !record.checkOut ? <a href={`https://www.google.com/maps?q=${record.currentLocation.lat},${record.currentLocation.lng}`} target="_blank" rel="noreferrer" className="text-red-500 hover:text-red-700 font-semibold flex items-center gap-1 animate-pulse"><MapPin className="w-4 h-4" /> LIVE</a> : null}
                         
-                        {record.checkInLocation && record.checkOutLocation && (
+                        {record.checkInLocation && (
                            <div className="flex flex-col gap-2 mt-1.5">
                             <button 
                               onClick={() => handleShowMap(record)} 
-                              className="bg-indigo-600 text-white px-2 py-1.5 rounded-lg border border-indigo-700 font-bold text-center hover:bg-indigo-700 transition flex items-center justify-center gap-1 shadow-sm text-[10px] uppercase tracking-tighter"
+                              className="bg-indigo-600 text-white px-3 py-2 rounded-lg border border-indigo-700 font-bold text-center hover:bg-indigo-700 transition flex items-center justify-center gap-1 shadow-sm text-[11px] uppercase tracking-wider min-w-[140px]"
                             >
-                                <Search className="w-3 h-3"/>
+                                <Search className="w-3.5 h-3.5"/>
                                 Route Tracking
                             </button>
-                            <a href={`https://www.google.com/maps/dir/?api=1&origin=${record.checkInLocation.lat},${record.checkInLocation.lng}&destination=${record.checkOutLocation.lat},${record.checkOutLocation.lng}&travelmode=driving`} target="_blank" rel="noreferrer" className="bg-white text-indigo-700 px-2 py-1 rounded border border-indigo-200 font-semibold text-center hover:bg-indigo-50 transition flex items-center justify-center gap-1 text-[10px]">
-                                <MapPin className="w-3 h-3"/> Google Route
-                            </a>
+                            {record.checkOutLocation && (
+                              <a href={`https://www.google.com/maps/dir/?api=1&origin=${record.checkInLocation.lat},${record.checkInLocation.lng}&destination=${record.checkOutLocation.lat},${record.checkOutLocation.lng}&travelmode=driving`} target="_blank" rel="noreferrer" className="bg-white text-indigo-700 px-3 py-1.5 rounded-lg border border-indigo-200 font-semibold text-center hover:bg-indigo-50 transition flex items-center justify-center gap-1 text-[10px] min-w-[140px]">
+                                  <MapPin className="w-3 h-3"/> Google Route
+                              </a>
+                            )}
                            </div>
                         )}
 
@@ -634,6 +742,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                 ), [records, user.role])}
               </tbody>
             </table>
+          </div>
             
             {hasMore && (
               <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-center">
@@ -649,7 +758,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
               </div>
             )}
             
-          </div>
+          </>
         )}
       </div>
 
