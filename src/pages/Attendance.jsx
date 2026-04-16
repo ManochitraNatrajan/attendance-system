@@ -118,41 +118,8 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
     }
   };
 
-  const getExactLocation = () => {
-    return new Promise((resolve, reject) => {
-      let watchId;
-      let timeoutId;
-      let bestPos = null;
-
-      const finishOpts = () => {
-         if (timeoutId) clearTimeout(timeoutId);
-         if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
-      };
-
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          bestPos = pos;
-          if (pos.coords.accuracy <= 20) {
-            finishOpts();
-            resolve(pos);
-          }
-        },
-        (error) => {
-           if (!bestPos) {
-              finishOpts();
-              reject(error);
-           }
-        },
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
-      );
-
-      // Force resolve with best position after 10 seconds if <20m not achieved
-      timeoutId = setTimeout(() => {
-        finishOpts();
-        if (bestPos) resolve(bestPos);
-        else reject(new Error('Location timeout'));
-      }, 10000);
-    });
+  const getExactLocation = async () => {
+    return await LocationTracker.getExactPosition();
   };
 
   const handleCheckIn = async () => {
@@ -208,11 +175,13 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
       }, 500);
 
     } catch (err) {
-      console.error(err);
-      if (err.message === 'Location timeout' || err.code === 1 || err.code === 2 || err.code === 3) {
-         alert('Please allow location access and ensure GPS is enabled to check in.');
+      console.error("Check-in error:", err);
+      if (err.message?.includes('accuracy') || err.message?.includes('timeout') || err.code === 2 || err.code === 3) {
+         alert('GPS ERROR: Could not get an accurate location within the time limit. Please move to an open area with a clear sky view and try again. (Accuracy required: < 50m)');
+      } else if (err.code === 1) {
+         alert('PERMISSION ERROR: Location access is required. Please enable location permissions and Precise Location in your browser settings.');
       } else {
-         alert(err.response?.data?.message || 'Failed to check-in');
+         alert(err.response?.data?.message || 'Failed to check-in. Ensure GPS is ON.');
       }
     } finally {
       setActionLoading(false);
@@ -230,15 +199,10 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
       finalLat = position.coords.latitude;
       finalLng = position.coords.longitude;
     } catch (e) {
-      console.warn("Exact location failed on checkout, falling back if possible", e);
-      const locStr = localStorage.getItem(`currentLoc_${user.id}`);
-      if (locStr) {
-         try {
-           const locObj = JSON.parse(locStr);
-           finalLat = locObj.lat;
-           finalLng = locObj.lng;
-         } catch (err) {}
-      }
+      console.error("GPS lock failed on checkout:", e);
+      alert('CHECKOUT FAILED: A fresh high-accuracy GPS lock is required to check out. Please move to an open area with a better signal and try again.');
+      setActionLoading(false);
+      return; // Stop checkout if no fresh lock
     }
 
     const checkOutTimeDate = new Date();

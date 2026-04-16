@@ -3,14 +3,12 @@ import axios from 'axios';
 import { format } from 'date-fns';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
-import GlobalLocationTracker from './components/GlobalLocationTracker';
 import LoadingScreen from './components/LoadingScreen';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Login = lazy(() => import('./pages/Login'));
 const Employees = lazy(() => import('./pages/Employees'));
 const Attendance = lazy(() => import('./pages/Attendance'));
-const RouteTracker = lazy(() => import('./components/RouteTracker'));
 
 function App() {
   const user = JSON.parse(localStorage.getItem('user'));
@@ -102,10 +100,6 @@ function App() {
 
   return (
     <Router>
-      <GlobalLocationTracker />
-      <Suspense fallback={null}>
-         <RouteTracker />
-      </Suspense>
       {user && <Navbar />}
         <div className="flex-1 overflow-auto bg-[var(--bg)] w-full h-full text-[var(--text)]">
           <Suspense fallback={<LoadingScreen />}>

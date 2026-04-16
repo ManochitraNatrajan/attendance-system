@@ -1,6 +1,7 @@
 import { registerPlugin } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import axios from 'axios';
+import { io } from 'socket.io-client';
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
@@ -10,16 +11,27 @@ export class LocationTracker {
   constructor(employeeId) {
     this.employeeId = employeeId;
     this.watcherId = null;
+    this.retryTimer = null;
     this.geofences = [];
     this.insideZones = new Set();
     this.isOnline = navigator.onLine;
+    this.lastSendTime = 0;
+    this.lastSentLat = null;
+    this.lastSentLng = null;
+    
+    const host = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+    this.socket = io(host, { autoConnect: false });
 
     window.addEventListener('online', () => {
+       console.log("[GPS] Device online - resuming sync");
        this.isOnline = true;
+       this.socket.connect();
        this.syncOfflineLocations();
     });
     window.addEventListener('offline', () => {
+       console.log("[GPS] Device offline - caching enabled");
        this.isOnline = false;
+       this.socket.disconnect();
     });
   }
 
@@ -28,13 +40,13 @@ export class LocationTracker {
       const res = await axios.get('/api/geofence');
       this.geofences = res.data || [];
     } catch (e) {
-      console.warn("Failed to fetch geofences", e);
+      console.warn("[GPS] Geofence fetch failed", e);
     }
   }
 
   getDistanceMeters(lat1, lon1, lat2, lon2) {
-    const R = 6371e3; // metres
-    const φ1 = lat1 * Math.PI/180; // φ, λ in radians
+    const R = 6371e3;
+    const φ1 = lat1 * Math.PI/180;
     const φ2 = lat2 * Math.PI/180;
     const Δφ = (lat2-lat1) * Math.PI/180;
     const Δλ = (lon2-lon1) * Math.PI/180;
@@ -43,45 +55,17 @@ export class LocationTracker {
             Math.cos(φ1) * Math.cos(φ2) *
             Math.sin(Δλ/2) * Math.sin(Δλ/2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-    return R * c; // in metres
-  }
-
-  async checkGeofences(lat, lng) {
-    for (const zone of this.geofences) {
-      const distance = this.getDistanceMeters(lat, lng, zone.latitude, zone.longitude);
-      const isInside = distance <= (zone.radius || 100);
-
-      if (isInside && !this.insideZones.has(zone.id)) {
-         this.insideZones.add(zone.id);
-         this.logGeofenceEvent(zone.name, 'ENTER');
-      } else if (!isInside && this.insideZones.has(zone.id)) {
-         this.insideZones.delete(zone.id);
-         this.logGeofenceEvent(zone.name, 'EXIT');
-      }
-    }
-  }
-
-  async logGeofenceEvent(zoneName, action) {
-    if (this.isOnline) {
-       try {
-         await axios.post('/api/geofence/event', {
-           employeeId: this.employeeId,
-           zoneName,
-           action,
-           timestamp: new Date()
-         });
-       } catch (e) { console.error("Geofence event failed", e); }
-    } else {
-       // Optional: cache geofence events for offline sync
-    }
+    return R * c;
   }
 
   async cacheLocation(location) {
-    const { value } = await Preferences.get({ key: STORAGE_KEY });
-    const locations = value ? JSON.parse(value) : [];
-    locations.push(location);
-    await Preferences.set({ key: STORAGE_KEY, value: JSON.stringify(locations) });
+    try {
+      const { value } = await Preferences.get({ key: STORAGE_KEY });
+      const locations = value ? JSON.parse(value) : [];
+      locations.push(location);
+      await Preferences.set({ key: STORAGE_KEY, value: JSON.stringify(locations) });
+      console.log(`[GPS] Location cached (Total: ${locations.length})`);
+    } catch (e) { console.error("[GPS] Cache failed", e); }
   }
 
   async syncOfflineLocations() {
@@ -96,124 +80,202 @@ export class LocationTracker {
         employeeId: this.employeeId,
         locations
       });
-      // Clear after successful sync
       await Preferences.remove({ key: STORAGE_KEY });
-      console.log(`Synced ${locations.length} offline points.`);
+      console.log(`[GPS] Synced ${locations.length} points.`);
     } catch (e) {
-      console.error("Offline sync failed, keeping cache", e);
-    }
-  }
-
-  async getCityName(lat, lng) {
-    try {
-      const res = await axios.get(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
-      const address = res.data?.address;
-      if (!address) return '';
-      return address.sublocality || address.locality || address.neighborhood || address.neighbourhood || address.village || address.hamlet || address.suburb || address.area || address.route || address.town || address.county || '';
-    } catch {
-      return '';
+      console.error("[GPS] Sync failed", e);
     }
   }
 
   async startTracking() {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    
+    console.log("[GPS] Starting Unified Tracking (Extreme Accuracy Mode)...");
     await this.fetchGeofences();
     await this.syncOfflineLocations();
+    if (this.isOnline) this.socket.connect();
+
+    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+        alert("CRITICAL: GPS tracking requires HTTPS. Please check your connection.");
+    }
 
     try {
-      // Configuration for plugin
       this.watcherId = await BackgroundGeolocation.addWatcher(
         {
-          backgroundMessage: "Tracking Active.",
-          backgroundTitle: "Krishna Dairy route tracking.",
+          backgroundMessage: "Tracking your shift movement with high precision.",
+          backgroundTitle: "Sri Krishna Dairy Live Tracking",
           requestPermissions: true,
           stale: false,
-          distanceFilter: 20 // 20 meters
+          distanceFilter: 2 // Ultra-sensitive to motion
         },
         async (location, error) => {
           if (error) {
-            console.error("BGL Error: ", error);
-            if (error.code === "NOT_AUTHORIZED") {
-                if (window.confirm("App needs location tracking. Open Settings?")) {
-                    BackgroundGeolocation.openSettings();
-                }
-            }
+            this.handleError(error);
             return;
           }
-
-          if (location && location.accuracy <= 50) {
-            const locData = {
-              latitude: location.latitude,
-              longitude: location.longitude,
-              timestamp: new Date().toISOString()
-            };
-
-            // Check geofences silently
-            this.checkGeofences(locData.latitude, locData.longitude);
-
-            if (this.isOnline) {
-                // Determine city name optionally or leave it for server
-                // To avoid rate-limiting Nominatim, we'll only send lat/lng for continuous tracking
-                try {
-                  await axios.post('/api/location/update', {
-                    employeeId: this.employeeId,
-                    latitude: locData.latitude,
-                    longitude: locData.longitude,
-                    city: ''
-                  });
-                } catch (e) {
-                  // Network error despite isOnline=true
-                  await this.cacheLocation(locData);
-                }
-            } else {
-                await this.cacheLocation(locData);
-            }
+          // Discard inaccurate points (> 50m) to fix 'Salem issue'
+          if (location && (location.accuracy <= 50)) {
+            console.log(`[GPS] Lock: ${location.latitude}, ${location.longitude} (+/- ${location.accuracy}m)`);
+            this.processLocationUpdate(location.latitude, location.longitude);
+          } else {
+             console.warn(`[GPS] Discarded low accuracy fix: ${location?.accuracy || 'Unknown'}m`);
           }
         }
       );
-      console.log("Background tracking started", this.watcherId);
     } catch (err) {
-      console.error("Failed to start BackgroundGeolocation. Are you on web?", err);
-      // Fallback for Web/Browser
+      console.warn("[GPS] Native tracking failed, trying Web Geolocation...");
       this.startWebFallback();
     }
   }
 
   startWebFallback() {
-      console.warn("Starting web geolocation fallback");
-      this.watcherId = navigator.geolocation.watchPosition(
-          async (pos) => {
-              if (pos.coords.accuracy <= 50) {
-                  const locData = { 
-                      latitude: pos.coords.latitude, 
-                      longitude: pos.coords.longitude, 
-                      timestamp: new Date().toISOString()
-                  };
-                  if (this.isOnline) {
-                      axios.post('/api/location/update', {
-                          employeeId: this.employeeId,
-                          latitude: locData.latitude,
-                          longitude: locData.longitude
-                      }).catch(() => this.cacheLocation(locData));
-                  } else {
-                      this.cacheLocation(locData);
-                  }
-              }
-          },
-          (err) => console.error("Web Fallback Error", err),
-          { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
-      );
+    if (!navigator.geolocation) {
+        alert("This device does not support GPS tracking.");
+        return;
+    }
+
+    this.watcherId = navigator.geolocation.watchPosition(
+        (pos) => {
+            const { latitude, longitude, accuracy } = pos.coords;
+            // Strict discard > 50m
+            if (accuracy <= 50) {
+                console.log(`[GPS] Web Lock: ${latitude.toFixed(6)}, ${longitude.toFixed(6)} (+/- ${accuracy.toFixed(1)}m)`);
+                this.processLocationUpdate(latitude, longitude);
+            } else {
+                console.warn(`[GPS] Inaccurate point discarded: ${accuracy.toFixed(1)}m`);
+            }
+        },
+        (err) => this.handleError(err),
+        { 
+            enableHighAccuracy: true, 
+            timeout: 15000, // User requested 15s
+            maximumAge: 0  // No cached data allowed
+        }
+    );
+  }
+
+  handleError(error) {
+    console.error("[GPS] ERROR:", error);
+    
+    // Case 1: Permission Denied
+    if (error.code === 1 || error.code === "NOT_AUTHORIZED") {
+        alert("GPS ERROR: Permission denied. You MUST enable 'Precise Location' and 'Allow All The Time' in settings for tracking to work.");
+        if (BackgroundGeolocation.openSettings) BackgroundGeolocation.openSettings();
+        return;
+    } 
+    
+    // Case 2 & 3: Position Unavailable / Timeout
+    if (error.code === 2 || error.code === 3) {
+        console.warn("[GPS] Signal lost. Retrying in 5 seconds...");
+        this.scheduleRetry();
+    }
+  }
+
+  scheduleRetry() {
+     if (this.retryTimer) return;
+     this.retryTimer = setTimeout(async () => {
+        this.retryTimer = null;
+        console.log("[GPS] Retrying tracking acquisition...");
+        await this.stopTracking();
+        this.startTracking();
+     }, 5000);
+  }
+
+  processLocationUpdate(lat, lng) {
+    const now = Date.now();
+    let distanceMoved = 0;
+    
+    if (this.lastSentLat && this.lastSentLng) {
+       distanceMoved = this.getDistanceMeters(this.lastSentLat, this.lastSentLng, lat, lng);
+    } else {
+       distanceMoved = 50; 
+    }
+
+    localStorage.setItem(`currentLoc_${this.employeeId}`, JSON.stringify({
+        lat, lng, timestamp: new Date().toISOString()
+    }));
+
+    const isMoving = distanceMoved >= 5;
+    const sendInterval = isMoving ? 10000 : 30000;
+
+    if (now - this.lastSendTime >= sendInterval || distanceMoved >= 20) {
+       this.lastSendTime = now;
+       this.lastSentLat = lat;
+       this.lastSentLng = lng;
+
+       const locData = { latitude: lat, longitude: lng, timestamp: new Date().toISOString() };
+       
+       if (this.isOnline) {
+          axios.post('/api/location/update', { 
+            employeeId: this.employeeId, latitude: lat, longitude: lng 
+          }).catch(() => this.cacheLocation(locData));
+
+          axios.post('/api/attendance/live-location', { 
+            employeeId: this.employeeId, lat, lng 
+          });
+       } else {
+          this.cacheLocation(locData);
+       }
+    }
   }
 
   async stopTracking() {
+    if (this.retryTimer) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+    }
     if (this.watcherId !== null) {
+      console.log("[GPS] Stopping Tracker...");
+      if (this.socket) this.socket.disconnect();
       try {
          await BackgroundGeolocation.removeWatcher({ id: this.watcherId });
-      } catch (e) {
-         if (navigator.geolocation) {
-             navigator.geolocation.clearWatch(this.watcherId);
-         }
+      } catch {
+         if (navigator.geolocation) navigator.geolocation.clearWatch(this.watcherId);
       }
       this.watcherId = null;
     }
+  }
+
+  static getExactPosition() {
+    return new Promise((resolve, reject) => {
+        let watchId;
+        let timeoutId;
+        let bestPos = null;
+
+        const cleanup = () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
+        };
+
+        watchId = navigator.geolocation.watchPosition(
+            (pos) => {
+                bestPos = pos;
+                console.log(`[GPS] Precision search: ${pos.coords.accuracy.toFixed(1)}m`);
+                // Use strict 50m but resolve immediately if < 20m
+                if (pos.coords.accuracy <= 20) {
+                    cleanup();
+                    resolve(pos);
+                }
+            },
+            (error) => {
+                if (!bestPos) {
+                    cleanup();
+                    reject(error);
+                }
+            },
+            { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+        );
+
+        timeoutId = setTimeout(() => {
+            cleanup();
+            if (bestPos && bestPos.coords.accuracy <= 50) {
+                console.log(`[GPS] Fresh search complete. Accuracy: ${bestPos.coords.accuracy.toFixed(1)}m`);
+                resolve(bestPos);
+            } else {
+                const currentAcc = bestPos ? `${bestPos.coords.accuracy.toFixed(1)}m` : 'No Signal';
+                reject(new Error(`Location too inaccurate (${currentAcc}) or timed out. Accuracy must be < 50m. Please move to an open area.`));
+            }
+        }, 16000);
+    });
   }
 }

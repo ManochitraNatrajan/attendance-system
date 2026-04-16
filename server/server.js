@@ -8,6 +8,9 @@ import PDFDocument from 'pdfkit';
 import mongoose from 'mongoose';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import http from 'http';
+import { Server } from 'socket.io';
+import cron from 'node-cron';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,7 +50,7 @@ const attendanceSchema = new mongoose.Schema({
     endedAt: Date,
     startLocation: { latitude: Number, longitude: Number, city: String, timestamp: Date },
     endLocation: { latitude: Number, longitude: Number, city: String, timestamp: Date },
-    locations: [{ latitude: Number, longitude: Number, city: String, timestamp: Date }],
+    locations: [{ latitude: Number, longitude: Number, city: String, timestamp: Date, isRepeat: { type: Boolean, default: false } }],
     stopPoints: [
       {
         city: String,
@@ -105,12 +108,46 @@ const GeofenceZone = mongoose.model('GeofenceZone', geofenceZoneSchema);
 // =======================
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] }
+});
+app.locals.io = io;
+
+io.on('connection', (socket) => {
+  console.log('Client connected for live tracking:', socket.id);
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/attendance_system';
 
 mongoose.connect(MONGODB_URI)
   .then(async () => {
     console.log('Connected to MongoDB');
+    
+    // Force close old sessions that weren't closed properly
+    const forceCloseOldSessions = async () => {
+      const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+      const today = format(nowIST, 'yyyy-MM-dd');
+      
+      const unclosedSessions = await Attendance.find({ date: { $ne: today }, checkOut: null });
+      if (unclosedSessions.length > 0) {
+        console.log(`Found ${unclosedSessions.length} unclosed old sessions. Auto-closing them.`);
+        for (const session of unclosedSessions) {
+          session.checkOut = "23:59:59";
+          session.status = "Auto Closed";
+          if (session.routeTracking && !session.routeTracking.endedAt) {
+             session.routeTracking.endedAt = new Date(session.date + "T23:59:59Z");
+          }
+          await session.save();
+        }
+      }
+    };
+    await forceCloseOldSessions();
+
     const adminExists = await Employee.countDocuments();
     if (adminExists === 0) {
       await Employee.create({
@@ -125,6 +162,68 @@ mongoose.connect(MONGODB_URI)
     }
   })
   .catch(err => console.error('MongoDB connection error:', err));
+
+// Auto Checkout Cron Job at 11:31 PM EVERY DAY
+cron.schedule('31 23 * * *', async () => {
+  console.log("Running Auto-checkout CRON Job at 11:31 PM...");
+  try {
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
+    const nowTime = format(nowIST, 'HH:mm:ss');
+    
+    const unclosedAttendances = await Attendance.find({ date: today, checkOut: null });
+    
+    for (const record of unclosedAttendances) {
+      record.checkOut = nowTime;
+      const checkInTime = record.checkIn;
+      const inDate = new Date(`1970-01-01T${checkInTime}Z`);
+      const outDate = new Date(`1970-01-01T${nowTime}Z`);
+      const diffHours = (outDate - inDate) / (1000 * 60 * 60);
+      
+      record.status = 'Auto Closed'; // Keep it Auto Closed but effectively treated by payroll depending on diffHours
+      
+      if (record.routeTracking && !record.routeTracking.endedAt) {
+          const lastLoc = record.routeTracking.locations.length > 0 ? record.routeTracking.locations[record.routeTracking.locations.length - 1] : null;
+          record.routeTracking.endedAt = new Date();
+          if (lastLoc) {
+            record.routeTracking.endLocation = {
+               latitude: lastLoc.latitude,
+               longitude: lastLoc.longitude,
+               city: lastLoc.city || '',
+               timestamp: new Date()
+            };
+          }
+      }
+      if (req.app.locals.io) {
+        req.app.locals.io.emit('employee-check-out', { employeeId: record.employeeId.toString() });
+      }
+      await record.save();
+      console.log(`Auto closed attendance for Employee: ${record.employeeId}`);
+    }
+    
+    // Auto mark Absent for full day missing
+    const allEmployees = await Employee.find();
+    for (const emp of allEmployees) {
+      const isPresent = await Attendance.findOne({ employeeId: emp._id, date: today });
+      if (!isPresent) {
+         await Attendance.create({
+            employeeId: emp._id,
+            date: today,
+            checkIn: '-',
+            checkOut: '-',
+            status: 'Absent'
+         });
+         console.log(`Auto marked absent: ${emp.name}`);
+      }
+    }
+    
+  } catch(e) {
+     console.error("Error running auto-checkout cron job:", e);
+  }
+}, {
+  scheduled: true,
+  timezone: "Asia/Kolkata"
+});
 
 app.use(cors());
 app.use(compression());
@@ -363,6 +462,20 @@ app.post('/api/attendance/check-in', async (req, res) => {
       checkOutLocation: null
     });
     
+    if (req.app.locals.io) {
+      const emp = await Employee.findById(employeeId).lean();
+      req.app.locals.io.emit('employee-check-in', {
+        employeeId,
+        id: employeeId,
+        employeeName: emp ? emp.name : 'Unknown',
+        checkIn: nowTime,
+        latitude,
+        longitude,
+        locationName,
+        timestamp: new Date()
+      });
+    }
+    
     res.status(201).json(newRecord);
   } catch (err) {
     console.error(err);
@@ -417,11 +530,20 @@ app.post('/api/attendance/live-location', async (req, res) => {
         }
       },
       { new: true, select: '-locationHistory -routeTracking' }
-    ).lean();
+    ).populate('employeeId', 'name role').lean();
     
     if (record) {
       const plain = record;
       plain.id = plain._id.toString();
+      if (req.app.locals.io) {
+        req.app.locals.io.emit('live-location-update', {
+           employeeId: plain.employeeId._id.toString(),
+           employeeName: plain.employeeId.name,
+           latitude: Number(lat),
+           longitude: Number(lng),
+           timestamp: new Date()
+        });
+      }
       res.json({ success: true, record: plain });
     }
     else res.status(404).json({ message: 'No active shift found to sync.' });
@@ -468,6 +590,9 @@ app.post('/api/attendance/check-out', async (req, res) => {
       record.workDetails = workDetails;
     }
     
+    if (req.app.locals.io) {
+      req.app.locals.io.emit('employee-check-out', { employeeId });
+    }
     await record.save();
     res.json(record);
   } catch (err) {
@@ -750,46 +875,52 @@ app.post('/api/location/update', async (req, res) => {
 
     const currentLoc = { latitude: Number(latitude), longitude: Number(longitude), city: city || '', timestamp: new Date() };
 
-    // Get last location
+    // Update raw current location for live status
+    record.currentLocation = { lat: currentLoc.latitude, lng: currentLoc.longitude, timestamp: currentLoc.timestamp };
+    record.locationHistory.push({ lat: currentLoc.latitude, lng: currentLoc.longitude, timestamp: currentLoc.timestamp });
+
+    // Track movement logic for polyline and distance
     const locations = record.routeTracking.locations;
+    let distKm = 0;
+    
     if (locations && locations.length > 0) {
       const lastLoc = locations[locations.length - 1];
-      const distKm = getDistanceKm(lastLoc.latitude, lastLoc.longitude, currentLoc.latitude, currentLoc.longitude);
+      distKm = getDistanceKm(lastLoc.latitude, lastLoc.longitude, currentLoc.latitude, currentLoc.longitude);
       
       const timeDiffHours = (currentLoc.timestamp - lastLoc.timestamp) / (1000 * 60 * 60);
       
       // Spike detection: ignore unrealistic speeds > 150km/h
-      if (timeDiffHours > 0 && distKm > 0.05 && (distKm / timeDiffHours) > 150) {
+      if (timeDiffHours > 0 && distKm > 0.1 && (distKm / timeDiffHours) > 150) {
+         console.warn(`[GPS] Spike ignored for ${employeeId}: ${distKm.toFixed(2)}km in ${timeDiffHours.toFixed(4)}hrs`);
          return res.json({ success: true, message: 'Spike ignored' });
       }
 
-      // Stop logic detection: distance < 0.02 km (20m)
+      // NO MOVEMENT LOGIC: Ignore movement < 20 meters (0.02 km) for polyline/distance
       if (distKm < 0.02) {
-        // Calculate duration since we arrived at this spot
-        // We'll walk backwards from locations to find the first time we were at this ~spot
+        // Evaluate Stop Point Logic
+        // Find how long we've been within this 20m radius
         let stayStartTime = lastLoc.timestamp;
-        for (let i = locations.length - 1; i >= 0; i--) {
-          const l = locations[i];
-          if (getDistanceKm(l.latitude, l.longitude, currentLoc.latitude, currentLoc.longitude) < 0.02) {
-            stayStartTime = l.timestamp;
-          } else {
-            break;
-          }
+        // Search backwards through raw history or previous route points to find start of stability
+        for (let i = record.locationHistory.length - 1; i >= 0; i--) {
+           const l = record.locationHistory[i];
+           if (getDistanceKm(l.lat, l.lng, currentLoc.latitude, currentLoc.longitude) < 0.02) {
+              stayStartTime = l.timestamp;
+           } else {
+              break;
+           }
         }
 
         const durationMinutes = (currentLoc.timestamp - new Date(stayStartTime)) / (1000 * 60);
 
         if (durationMinutes >= 5) {
-          // It's a stop point. Check if we already recorded this stop.
           const stops = record.routeTracking.stopPoints || [];
           let activeStop = stops.length > 0 ? stops[stops.length - 1] : null;
 
-          // If last stop's end time is very close to current, we are just continuing the same stop
-          if (activeStop && (currentLoc.timestamp - new Date(activeStop.endTime)) / (1000 * 60) < 5) {
+          // If last stop's end time is very close, we are continuing the same stop
+          if (activeStop && (currentLoc.timestamp - new Date(activeStop.endTime)) / (1000 * 60) < 10) {
              activeStop.endTime = currentLoc.timestamp;
              activeStop.durationMinutes = (currentLoc.timestamp - new Date(activeStop.startTime)) / (1000 * 60);
           } else {
-             // New stop point
              record.routeTracking.stopPoints.push({
                city: city || lastLoc.city,
                latitude: currentLoc.latitude,
@@ -800,17 +931,51 @@ app.post('/api/location/update', async (req, res) => {
              });
           }
         }
+        
+        // DO NOT push to routeTracking.locations or add to totalDistanceKm if < 20m
+        await record.save();
+        
+        // Still emit for live marker update on map, but without path growth
+        if (req.app.locals.io) {
+          req.app.locals.io.emit('live-route-update', {
+             employeeId,
+             location: currentLoc,
+             totalDistanceKm: record.routeTracking.totalDistanceKm,
+             noMove: true
+          });
+        }
+        return res.json({ success: true, stationary: true });
       }
 
-      // Add to total distance if we moved slightly
-      if (distKm >= 0.005) { // 5 meters filter to avoid accumulating jitter but keep slow movement
-         record.routeTracking.totalDistanceKm += distKm;
-      }
+      // SIGNIFICANT MOVEMENT DETECTED (>= 20m)
+      record.routeTracking.totalDistanceKm += distKm;
     }
 
-    record.routeTracking.locations.push(currentLoc);
+    // Return Path Detection Logic
+    let isRepeat = false;
+    if (locations && locations.length > 5) {
+      for (let i = 0; i < locations.length - 5; i++) {
+        const prev = locations[i];
+        if (getDistanceKm(prev.latitude, prev.longitude, currentLoc.latitude, currentLoc.longitude) < 0.03) {
+          isRepeat = true;
+          break;
+        }
+      }
+    }
+    currentLoc.isRepeat = isRepeat;
 
+    record.routeTracking.locations.push(currentLoc);
     await record.save();
+
+    if (req.app.locals.io) {
+      const employeePopulated = await Employee.findById(employeeId).lean();
+      req.app.locals.io.emit('live-route-update', {
+         employeeId,
+         employeeName: employeePopulated ? employeePopulated.name : 'Unknown',
+         location: currentLoc,
+         totalDistanceKm: record.routeTracking.totalDistanceKm
+      });
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -1026,6 +1191,20 @@ app.post('/api/location/sync', async (req, res) => {
         if (distKm >= 0.005) {
            record.routeTracking.totalDistanceKm += distKm;
         }
+
+        // Repeat Path Detection for Sync
+        let isRepeat = false;
+        if (locations && locations.length > 5) {
+          for (let i = 0; i < locations.length - 5; i++) {
+            const prev = locations[i];
+            const d = getDistanceKm(prev.latitude, prev.longitude, currentLoc.latitude, currentLoc.longitude);
+            if (d < 0.03) {
+              isRepeat = true;
+              break;
+            }
+          }
+        }
+        currentLoc.isRepeat = isRepeat;
       }
       record.routeTracking.locations.push(currentLoc);
     }
@@ -1093,6 +1272,6 @@ app.get('*', (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

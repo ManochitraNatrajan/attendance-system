@@ -4,10 +4,14 @@ import axios from 'axios';
 import { format } from 'date-fns';
 import { Users, UserCheck, UserX, Clock } from 'lucide-react';
 
+import { MapPin } from 'lucide-react';
+
 import Skeleton from '../components/Skeleton';
+import AdminLiveMap from '../components/AdminLiveMap';
 
 const Dashboard = memo(function Dashboard({ stats, refreshStats }) {
   const user = JSON.parse(localStorage.getItem('user'));
+  const [showLiveMap, setShowLiveMap] = useState(false);
 
   useEffect(() => {
     // Silently refresh stats in the background on mount
@@ -67,8 +71,18 @@ const Dashboard = memo(function Dashboard({ stats, refreshStats }) {
               Manage Employees
             </Link>
           )}
+          {user?.role === 'Admin' && (
+             <button
+                onClick={() => setShowLiveMap(true)}
+                className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-lg hover:bg-red-100 transition font-medium text-sm flex items-center gap-2"
+             >
+                <MapPin className="w-4 h-4 animate-bounce" /> Live Employee Tracking
+             </button>
+          )}
         </div>
       </div>
+      
+      {showLiveMap && <AdminLiveMap onClose={() => setShowLiveMap(false)} />}
     </div>
   );
 });

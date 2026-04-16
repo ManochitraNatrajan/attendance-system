@@ -24,6 +24,11 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+import { registerSW } from 'virtual:pwa-register';
+
+// Register PWA service worker
+registerSW({ immediate: true });
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <ErrorBoundary><App /></ErrorBoundary>
