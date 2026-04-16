@@ -492,30 +492,30 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
 
       {sessionSummary && (
         <div className="bg-white rounded-xl shadow-sm border border-[var(--accent-border)] p-6 mb-8 text-center sm:text-left flex flex-col sm:flex-row justify-between items-center gap-6">
-          <div>
+          <div className="w-full">
             <h2 className="text-xl font-semibold text-gray-900">Session Summary</h2>
-            <div className="mt-4 flex flex-wrap gap-4">
-              <div className="flex flex-col text-sm bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
+            <div className="mt-4 flex flex-row overflow-x-auto pb-2 gap-4 snap-x whitespace-nowrap">
+              <div className="flex flex-col text-sm bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 shrink-0 snap-start">
                 <span className="text-gray-500">Check In</span>
                 <span className="font-bold text-gray-900">{sessionSummary.checkInTime}</span>
               </div>
-              <div className="flex flex-col text-sm bg-gray-50 px-4 py-2 rounded-lg border border-gray-200">
+              <div className="flex flex-col text-sm bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 shrink-0 snap-start">
                 <span className="text-gray-500">Check Out</span>
                 <span className="font-bold text-gray-900">{sessionSummary.checkOutTime}</span>
               </div>
-              <div className="flex flex-col text-sm bg-blue-50 px-4 py-2 rounded-lg border border-blue-200">
+              <div className="flex flex-col text-sm bg-blue-50 px-4 py-2 rounded-lg border border-blue-200 shrink-0 snap-start">
                 <span className="text-blue-800">Total Hours</span>
                 <span className="font-bold text-blue-900">{sessionSummary.workingHours} hrs</span>
               </div>
-              <div className="flex flex-col text-sm bg-green-50 px-4 py-2 rounded-lg border border-green-200">
+              <div className="flex flex-col text-sm bg-green-50 px-4 py-2 rounded-lg border border-green-200 shrink-0 snap-start">
                 <span className="text-green-800">Travel Expense</span>
                 <span className="font-bold text-green-900">₹{sessionSummary.travelExpense} ({sessionSummary.distance} km)</span>
               </div>
-              <div className="flex flex-col text-sm bg-orange-50 px-4 py-2 rounded-lg border border-orange-200">
+              <div className="flex flex-col text-sm bg-orange-50 px-4 py-2 rounded-lg border border-orange-200 shrink-0 snap-start">
                 <span className="text-orange-800">Food Expense</span>
                 <span className="font-bold text-orange-900">₹{sessionSummary.foodExpense}</span>
               </div>
-              <div className={`flex flex-col text-sm px-4 py-2 rounded-lg border font-bold justify-center items-center ${
+              <div className={`flex flex-col text-sm px-4 py-2 rounded-lg border font-bold justify-center items-center shrink-0 snap-start ${
                 sessionSummary.status === 'Present' ? 'bg-green-100 text-green-800 border-green-200' : 'bg-yellow-100 text-yellow-800 border-yellow-200'
               }`}>
                 {sessionSummary.status}
@@ -598,25 +598,42 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                          <span className="text-[10px] font-black text-indigo-400 uppercase">Earn:</span>
                          <span className="text-xs font-extrabold text-indigo-700">₹{record.travelExpense || 0}</span>
                       </div>
+                      <div className="bg-orange-50 px-3 py-1.5 rounded-lg flex items-center gap-2 border border-orange-100">
+                         <span className="text-[10px] font-black text-orange-400 uppercase">Food:</span>
+                         <span className="text-xs font-extrabold text-orange-700">₹{record.foodExpense || 0}</span>
+                      </div>
+
                    </div>
                 </div>
 
-                <div className="flex gap-2">
-                   {record.checkInLocation && (
-                      <button 
-                        onClick={() => handleShowMap(record)} 
-                        className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold text-sm shadow-md shadow-indigo-200 active:scale-95 transition-all flex items-center justify-center gap-2"
+                <div className="flex flex-col gap-2">
+                   <div className="flex gap-2 w-full">
+                       {record.checkInLocation && (
+                          <button 
+                            onClick={() => handleShowMap(record)} 
+                            className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold text-sm shadow-md shadow-indigo-200 active:scale-95 transition-all flex items-center justify-center gap-2"
+                          >
+                            <Search className="w-4 h-4"/> ROUTE TRACKING
+                          </button>
+                       )}
+                       {user.role === 'Admin' && record.workDetails?.some(w => w.trim()) && (
+                          <button 
+                            onClick={() => setViewingDetailsFor(record)}
+                            className="bg-white text-indigo-600 border-2 border-indigo-600 px-4 py-3 rounded-xl font-bold text-sm active:scale-95 transition-all shrink-0"
+                          >
+                            DETAILS
+                          </button>
+                       )}
+                   </div>
+                   {record.checkOutLocation && record.checkInLocation && (
+                      <a 
+                        href={`https://www.google.com/maps/dir/?api=1&origin=${record.checkInLocation.lat},${record.checkInLocation.lng}&destination=${record.checkOutLocation.lat},${record.checkOutLocation.lng}&travelmode=driving`} 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        className="w-full bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 py-3 rounded-xl font-bold text-sm shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2"
                       >
-                        <Search className="w-4 h-4"/> ROUTE TRACKING
-                      </button>
-                   )}
-                   {user.role === 'Admin' && record.workDetails?.some(w => w.trim()) && (
-                      <button 
-                        onClick={() => setViewingDetailsFor(record)}
-                        className="bg-white text-indigo-600 border-2 border-indigo-600 px-4 py-3 rounded-xl font-bold text-sm active:scale-95 transition-all"
-                      >
-                        DETAILS
-                      </button>
+                         <MapPin className="w-4 h-4"/> GET GOOGLE ROUTE
+                      </a>
                    )}
                 </div>
               </div>

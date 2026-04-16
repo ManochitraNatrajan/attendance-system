@@ -22,6 +22,12 @@ function MapAutoBounds({ data }) {
         map.fitBounds(bounds, { padding: [50, 50] });
       }
     }
+    
+    // Fix Leaflet container size issues on mobile modals
+    const timeoutId = setTimeout(() => {
+       map.invalidateSize();
+    }, 500);
+    return () => clearTimeout(timeoutId);
   }, [data, map]);
   return null;
 }
@@ -73,6 +79,8 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
       });
       setRouteData(res.data);
       setLoading(false);
+      console.log("[DEBUG] Final Route Data loaded:", res.data);
+      console.log("[DEBUG] GPS Raw Coords count:", res.data.locations ? res.data.locations.length : 0);
       
       // After fetching data, start road snapping
       if (res.data.locations && res.data.locations.length >= 2) {
@@ -163,6 +171,43 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
     return segments;
   }, [routeData, snappedSegments]);
 
+  const generateGoogleMapsUrl = useCallback(() => {
+    if (!routeData) return '#';
+    
+    // Fallback if no locations exist
+    if (!routeData.locations || routeData.locations.length === 0) {
+       if (routeData.startLocation) {
+          return `https://www.google.com/maps?q=${routeData.startLocation.latitude},${routeData.startLocation.longitude}`;
+       }
+       return '#';
+    }
+
+    const locs = routeData.locations;
+    const startLoc = routeData.startLocation || locs[0];
+    const endLoc = routeData.endLocation || locs[locs.length - 1];
+
+    const origin = `${startLoc.latitude},${startLoc.longitude}`;
+    const destination = `${endLoc.latitude},${endLoc.longitude}`;
+
+    // Sample waypoints if there are many points to avoid URL length issues (Google limit is around 10)
+    const waypoints = [];
+    const maxWaypoints = 10;
+    
+    // Only sample if we have more than 2 points to act as waypoints between start and end
+    if (locs.length > 2) {
+        const step = Math.ceil((locs.length - 2) / maxWaypoints);
+        for (let i = 1; i < locs.length - 1; i += step) {
+            waypoints.push(`${locs[i].latitude},${locs[i].longitude}`);
+        }
+    }
+
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}`;
+    if (waypoints.length > 0) {
+        url += `&waypoints=${waypoints.join('|')}`;
+    }
+    return url;
+  }, [routeData]);
+
   return (
     <div className="fixed inset-0 z-[99998] flex items-center justify-center bg-gray-900/40 backdrop-blur-md p-4 overflow-hidden">
       <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-7xl max-h-[90vh] flex flex-col relative z-[99999] border border-white/20 animate-in fade-in zoom-in duration-300">
@@ -209,7 +254,7 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
               
               {/* Left Column: Map and Summary */}
               <div className="flex-1 flex flex-col gap-8 min-h-0">
-                <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden min-h-[400px] relative flex-1">
+                <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden min-h-[300px] flex-1 relative flex flex-col">
                    <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center z-10 relative">
                       <h3 className="font-bold text-gray-800 flex items-center gap-2"><Navigation className="w-5 h-5 text-indigo-500"/> Interactive Journey Map</h3>
                       <div className="flex gap-2">
@@ -230,11 +275,11 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                       </div>
                    </div>
                    
-                   <div className="w-full h-[calc(100%-61px)] relative z-0">
+                   <div className="w-full flex-1 min-h-[300px] relative z-0">
                       <MapContainer
                         center={[20.5937, 78.9629]}
                         zoom={5}
-                        style={{ height: '100%', width: '100%' }}
+                        style={{ height: '100%', width: '100%', minHeight: '300px' }}
                         scrollWheelZoom={true}
                       >
                          <TileLayer
@@ -326,6 +371,15 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                         <span className="text-green-900 font-black text-sm uppercase tracking-tighter">Verified</span>
                      </div>
                    </div>
+                </div>
+
+                <div className="mt-2 shrink-0">
+                   <button 
+                     onClick={() => window.open(generateGoogleMapsUrl(), '_blank')}
+                     className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-200 transition-colors flex items-center justify-center gap-2"
+                   >
+                     <MapPin className="w-5 h-5"/> Open Full Route in Google Maps
+                   </button>
                 </div>
               </div>
 

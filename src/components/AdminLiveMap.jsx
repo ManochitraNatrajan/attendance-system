@@ -43,6 +43,12 @@ function MapAutoBounds({ employees }) {
       const bounds = L.latLngBounds(Object.values(employees).map(e => [e.lat, e.lng]));
       map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
     }
+    
+    // Fix Leaflet container size issues on mobile
+    const timeoutId = setTimeout(() => {
+       map.invalidateSize();
+    }, 500);
+    return () => clearTimeout(timeoutId);
   }, [employees, map]);
   return null;
 }
@@ -366,13 +372,13 @@ export default function AdminLiveMap({ onClose }) {
            </div>
 
            {/* Leaflet Map Area */}
-           <div className="flex-1 h-full w-full relative">
-              <div className="w-full h-full relative z-10">
+           <div className="flex-1 h-full w-full min-h-[300px] relative">
+              <div className="w-full h-full min-h-[300px] relative z-10">
                  {!loading && (
                     <MapContainer
                       center={[20.5937, 78.9629]}
                       zoom={5}
-                      style={{ height: '100%', width: '100%' }}
+                      style={{ height: '100%', width: '100%', minHeight: '300px' }}
                       scrollWheelZoom={true}
                       zoomControl={false}
                     >
