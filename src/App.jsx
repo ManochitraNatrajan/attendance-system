@@ -4,6 +4,7 @@ import { format } from 'date-fns';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import LoadingScreen from './components/LoadingScreen';
+import { initTimeSync } from './utils/timeSync';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Login = lazy(() => import('./pages/Login'));
@@ -64,6 +65,7 @@ function App() {
   };
 
   useEffect(() => {
+    initTimeSync();
     fetchGlobalData();
     
     // 1.5s branding duration

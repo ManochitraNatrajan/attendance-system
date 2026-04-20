@@ -5,6 +5,8 @@ const attendanceSchema = new mongoose.Schema({
   date: { type: String, required: true }, 
   checkIn: { type: String }, 
   checkOut: { type: String, default: null }, 
+  checkoutType: { type: String, enum: ['manual', 'auto'], default: null },
+  isCheckedOut: { type: Boolean, default: false },
   status: { type: String, default: 'Pending' }, 
   checkInLocation: {
     lat: Number,

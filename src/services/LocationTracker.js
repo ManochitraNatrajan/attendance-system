@@ -2,6 +2,7 @@ import { registerPlugin } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import axios from 'axios';
 import { io } from 'socket.io-client';
+import { getSyncedTime, getSyncedTimeNow } from '../utils/timeSync';
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
@@ -182,7 +183,7 @@ export class LocationTracker {
   }
 
   processLocationUpdate(lat, lng) {
-    const now = Date.now();
+    const now = getSyncedTimeNow();
     let distanceMoved = 0;
     
     if (this.lastSentLat && this.lastSentLng) {
@@ -192,7 +193,7 @@ export class LocationTracker {
     }
 
     localStorage.setItem(`currentLoc_${this.employeeId}`, JSON.stringify({
-        lat, lng, timestamp: new Date().toISOString()
+        lat, lng, timestamp: getSyncedTime().toISOString()
     }));
 
     const isMoving = distanceMoved >= 5;
@@ -203,17 +204,24 @@ export class LocationTracker {
        this.lastSentLat = lat;
        this.lastSentLng = lng;
 
-       const locData = { latitude: lat, longitude: lng, timestamp: new Date().toISOString() };
+       const locData = { latitude: lat, longitude: lng, timestamp: getSyncedTime().toISOString() };
        
        if (this.isOnline) {
-          axios.post('/api/location/update', { 
-            employeeId: this.employeeId, latitude: lat, longitude: lng 
-          }).catch(() => this.cacheLocation(locData));
+           axios.post('/api/location/update', { 
+             employeeId: this.employeeId, latitude: lat, longitude: lng 
+           }).catch(err => {
+               if (err.response && err.response.status === 404) {
+                   console.log("[GPS] Session ended. Auto-stopping tracker.");
+                   this.stopTracking();
+               } else {
+                   this.cacheLocation(locData);
+               }
+           });
 
-          axios.post('/api/attendance/live-location', { 
-            employeeId: this.employeeId, lat, lng 
-          });
-       } else {
+           axios.post('/api/attendance/live-location', { 
+             employeeId: this.employeeId, lat, lng 
+           }).catch(() => {});
+        } else {
           this.cacheLocation(locData);
        }
     }

@@ -5,7 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MapPin, Activity, X, Info, Navigation, Clock, ShieldCheck, Flag, History } from 'lucide-react';
 import Skeleton from './Skeleton';
-import { fetchRoadRoute } from '../services/routingService';
+import { fetchRoadRoute } from '../services/googleRoutingService';
 
 // Map Component to handle bounds auto-fit
 function MapAutoBounds({ data }) {
@@ -61,6 +61,333 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [snappedSegments, setSnappedSegments] = useState([]);
 
+  // Format "HH:mm:ss" cleanly without timezone shifts
+  const formatShiftTime = (timeData) => {
+    if (!timeData || timeData === '-') return null;
+    let h, m;
+    if (typeof timeData === 'string' && timeData.includes('T')) {
+      const d = new Date(timeData);
+      h = d.getHours();
+      m = d.getMinutes().toString().padStart(2, '0');
+    } else if (typeof timeData === 'number' || timeData instanceof Date) {
+      const d = new Date(timeData);
+      h = d.getHours();
+      m = d.getMinutes().toString().padStart(2, '0');
+    } else if (typeof timeData === 'string' && timeData.includes(':')) {
+      const parts = timeData.split(':');
+      h = parseInt(parts[0], 10);
+      m = parts[1];
+    } else {
+      return null;
+    }
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${m} ${ampm}`;
+  };
+
+  const getDistanceKm = (lat1, lon1, lat2, lon2) => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  };
+
+  const formatDurationReadable = (mins) => {
+    const val = Math.max(0, Math.round(mins));
+    if (val < 60) return `${val} mins`;
+    const h = Math.floor(val / 60);
+    const m = val % 60;
+    return `${h} hrs ${m} mins`;
+  };
+
+  const parseTimeStrToDate = (timeStr, baseDateStr) => {
+    if (!timeStr) return null;
+    if (timeStr.includes('T')) return timeStr;
+
+    let h = 0, m = 0, s = 0;
+    const cleanStr = timeStr.trim().toLowerCase();
+    const isPM = cleanStr.includes('pm');
+    const isAM = cleanStr.includes('am');
+    
+    // Remove AM/PM texts
+    const timePart = cleanStr.replace(/[a-z]/g, '').trim();
+    const parts = timePart.split(':');
+    
+    h = parseInt(parts[0] || 0, 10);
+    m = parseInt(parts[1] || 0, 10);
+    s = parseInt(parts[2] || 0, 10);
+
+    if (isPM && h !== 12) h += 12;
+    if (isAM && h === 12) h = 0;
+    
+    let y, mo, dStr;
+    if (baseDateStr) {
+        [y, mo, dStr] = baseDateStr.split('-');
+    } else {
+        const todayStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}).split(',')[0];
+        const tdObj = new Date(todayStr);
+        y = tdObj.getFullYear();
+        mo = tdObj.getMonth() + 1;
+        dStr = tdObj.getDate();
+    }
+    
+    const dObj = new Date(parseInt(y), parseInt(mo) - 1, parseInt(dStr), h, m, s);
+    return dObj.toISOString();
+  };
+
+  const timelineData = useMemo(() => {
+    if (!routeData) return { finalTimeline: [], totalMins: 0 };
+    
+    let locs = routeData.locations || [];
+    const startLoc = routeData.startLocation || (locs.length > 0 ? locs[0] : null);
+    const routeDateStr = routeData.date || new Date().toISOString().split('T')[0];
+    const startT = routeData.checkIn ? parseTimeStrToDate(routeData.checkIn, routeDateStr) : (startLoc ? startLoc.timestamp : null);
+
+    if (!startT) return { finalTimeline: [], totalMins: 0 };
+
+    const checkInTimeMs = new Date(startT).getTime();
+
+    let sessionState = 'ACTIVE';
+    if (routeData.isCheckedOut || routeData.checkOut || routeData.endedAt) {
+        if (routeData.checkoutType === 'manual') {
+            sessionState = 'MANUAL_DONE';
+        } else if (routeData.checkoutType === 'auto') {
+            sessionState = 'AUTO_DONE';
+        } else {
+            // Strong fallback if type is missing but checkout exists
+            if (routeData.checkOut === '23:59:00' || routeData.checkOut === '23:59:59' || routeData.status === 'Auto Closed' || !routeData.checkOut) {
+                sessionState = 'AUTO_DONE';
+            } else {
+                sessionState = 'MANUAL_DONE';
+            }
+        }
+    }
+    
+    let finalStatus = sessionState === 'ACTIVE' ? 'Active' : (sessionState === 'MANUAL_DONE' ? 'Checked Out' : 'Auto Closed');
+    const endLoc = routeData.endLocation || routeData.routeTracking?.endLocation || (locs.length > 0 ? locs[locs.length - 1] : startLoc);
+    let endT = (routeData.checkOut && routeData.checkOut !== '23:59:00' && routeData.checkOut !== '23:59:59') ? parseTimeStrToDate(routeData.checkOut, routeDateStr) : null;
+    // Force checkOut to ALWAYS exist strictly on the exact same day string as checkIn
+    let checkOutTimeMs;
+    // Same day extraction 
+    let baseDObj = new Date(checkInTimeMs);
+    let endH = 23, endM = 59, endS = 0;
+    
+    if (endT) {
+       let ed = new Date(endT);
+       endH = ed.getHours();
+       endM = ed.getMinutes();
+       endS = ed.getSeconds();
+    }
+    
+    // We STRICTLY lock checkout to the exact same year, month, date as checkIn
+    let cleanEndDObj = new Date(baseDObj.getFullYear(), baseDObj.getMonth(), baseDObj.getDate(), endH, endM, endS);
+    checkOutTimeMs = cleanEndDObj.getTime();
+
+    // STRICT RULE: DO NOT add +1 day under any condition.
+    if (checkOutTimeMs < checkInTimeMs) {
+       // Clamp negative durations
+    }
+    
+    if (sessionState !== 'ACTIVE') {
+        locs = locs.filter(loc => new Date(loc.timestamp).getTime() <= checkOutTimeMs);
+    }
+
+    // FORCE SEGMENT CREATION
+    let rawSegments = [];
+    if (locs.length > 0) {
+        // Iterate every 2 GPS points
+        let i = 0;
+        while (i < locs.length - 1) {
+            let j = i + 1;
+            let currentDist = getDistanceKm(locs[i].latitude, locs[i].longitude, locs[j].latitude, locs[j].longitude) * 1000;
+            let currentDur = (new Date(locs[j].timestamp).getTime() - new Date(locs[i].timestamp).getTime()) / 60000;
+
+            if (currentDist > 40) {
+                // MARK as TRANSIT
+                rawSegments.push({ type: 'transit', startIdx: i, endIdx: j, distance: currentDist, duration: currentDur });
+                i++;
+            } else {
+                // Peek ahead for stationary duration > 5 mins
+                let stopEnd = i;
+                let lookAhead = i + 1;
+                while (lookAhead < locs.length) {
+                    let d = getDistanceKm(locs[i].latitude, locs[i].longitude, locs[lookAhead].latitude, locs[lookAhead].longitude) * 1000;
+                    if (d < 30) {
+                        stopEnd = lookAhead;
+                        lookAhead++;
+                    } else {
+                        break;
+                    }
+                }
+                let totalStopDur = (new Date(locs[stopEnd].timestamp).getTime() - new Date(locs[i].timestamp).getTime()) / 60000;
+                
+                if (totalStopDur > 5) {
+                    // MARK as STOP
+                    rawSegments.push({ type: 'stop', startIdx: i, endIdx: stopEnd, duration: totalStopDur });
+                    i = stopEnd; 
+                } else {
+                    // Moving slowly or paused briefly < 5 mins -> group into Transit
+                    rawSegments.push({ type: 'transit', startIdx: i, endIdx: i+1, duration: (new Date(locs[i+1].timestamp).getTime() - new Date(locs[i].timestamp).getTime()) / 60000, distance: getDistanceKm(locs[i].latitude, locs[i].longitude, locs[i+1].latitude, locs[i+1].longitude) * 1000 });
+                    i++;
+                }
+            }
+        }
+    }
+
+    // Merge adjacent segments
+    let mergedSegments = [];
+    for (let seg of rawSegments) {
+        if (mergedSegments.length === 0) {
+            mergedSegments.push({...seg});
+            continue;
+        }
+        let last = mergedSegments[mergedSegments.length - 1];
+        if (last.type === seg.type && last.type === 'transit') {
+            last.endIdx = seg.endIdx;
+            last.duration += seg.duration;
+            last.distance += seg.distance;
+        } else {
+            mergedSegments.push({...seg});
+        }
+    }
+
+    const finalTimeline = [];
+    let totalMins = 0;
+
+    finalTimeline.push({
+         type: 'start',
+         title: 'Start Location',
+         subtitle: startLoc?.city || 'Origin Node',
+         timeStr: formatShiftTime(checkInTimeMs),
+         timestamp: checkInTimeMs,
+    });
+    
+    let lastTime = checkInTimeMs;
+
+    if (mergedSegments.length > 0) {
+        let firstStart = new Date(locs[mergedSegments[0].startIdx].timestamp).getTime();
+        let gap = (firstStart - lastTime) / 60000;
+        if (gap >= 1) {
+            mergedSegments.unshift({ type: 'transit_gap', startTime: lastTime, endTime: firstStart, duration: gap });
+        }
+    } else if (checkOutTimeMs > lastTime) {
+        let gap = (checkOutTimeMs - lastTime) / 60000;
+        let d = endLoc ? getDistanceKm(startLoc.latitude, startLoc.longitude, endLoc.latitude, endLoc.longitude) * 1000 : 0;
+        mergedSegments.push({ type: (d > 40 ? 'transit_gap' : 'stop_gap'), lat: startLoc.latitude, lng: startLoc.longitude, city: startLoc.city, startTime: lastTime, endTime: checkOutTimeMs, duration: gap });
+    }
+
+    for (let seg of mergedSegments) {
+        let segStart = seg.startTime || new Date(locs[seg.startIdx].timestamp).getTime();
+        let segEnd = seg.endTime || new Date(locs[seg.endIdx].timestamp).getTime();
+        
+        if (segStart > lastTime) {
+            let gap = (segStart - lastTime) / 60000;
+            if (gap >= 1) {
+                totalMins += gap;
+                finalTimeline.push({
+                   type: 'transit',
+                   durationMins: gap,
+                   timeRange: `${formatShiftTime(lastTime)} – ${formatShiftTime(segStart)}`,
+                   timestamp: lastTime + 1
+                });
+            }
+        }
+        
+        totalMins += seg.duration;
+        if (seg.type.includes('transit')) {
+            finalTimeline.push({
+               type: 'transit',
+               durationMins: seg.duration,
+               timeRange: `${formatShiftTime(segStart)} – ${formatShiftTime(segEnd)}`,
+               timestamp: segStart
+            });
+        } else {
+            let pL = seg.startIdx !== undefined ? locs[seg.startIdx] : {latitude: seg.lat, longitude: seg.lng, city: seg.city};
+            finalTimeline.push({
+               type: 'stop',
+               title: 'Stopped',
+               subtitle: pL?.city || 'Stationary Location',
+               durationMins: seg.duration,
+               timeRange: `${formatShiftTime(segStart)} – ${formatShiftTime(segEnd)}`,
+               timestamp: segStart,
+               lat: pL?.latitude,
+               lng: pL?.longitude
+            });
+        }
+        lastTime = segEnd;
+    }
+
+    if (checkOutTimeMs > lastTime) {
+         let gapMins = (checkOutTimeMs - lastTime) / 60000;
+         if (gapMins >= 1) {
+              let lastL = locs.length > 0 ? locs[locs.length - 1] : startLoc;
+              let isStationary = lastL && endLoc ? (getDistanceKm(lastL.latitude, lastL.longitude, endLoc.latitude, endLoc.longitude) * 1000 < 30) : false;
+              
+              totalMins += gapMins;
+              if (isStationary) {
+                  finalTimeline.push({
+                     type: 'stop',
+                     title: 'Stopped',
+                     subtitle: lastL?.city || 'Stationary Location',
+                     durationMins: gapMins,
+                     timeRange: `${formatShiftTime(lastTime)} – ${formatShiftTime(checkOutTimeMs)}`,
+                     timestamp: lastTime + 1,
+                     lat: lastL.latitude,
+                     lng: lastL.longitude
+                  });
+              } else {
+                  finalTimeline.push({
+                     type: 'transit',
+                     durationMins: gapMins,
+                     timeRange: `${formatShiftTime(lastTime)} – ${formatShiftTime(checkOutTimeMs)}`,
+                     timestamp: lastTime + 1
+                  });
+              }
+         }
+    }
+    
+    // 4. FINAL NODE: ALWAYS SHOW END LOCATION / CURRENT LOCATION
+    let finalTitle = '';
+    
+    if (sessionState === "ACTIVE") {
+        finalTitle = "Current Location";
+    } else if (sessionState === "MANUAL_DONE") {
+        finalTitle = "End Location";
+    } else if (sessionState === "AUTO_DONE") {
+        finalTitle = "End Location";
+    }
+
+    let finalSub = endLoc?.city || 'Location Unknown';
+    if (sessionState !== "ACTIVE") {
+        finalSub = `${finalSub} • ${finalStatus}`;
+    }
+    
+    // Force rule: remove last 'stop' if checkout exists (to replace it with Checked Out)
+    if (sessionState !== "ACTIVE") {
+        if (finalTimeline.length > 0 && finalTimeline[finalTimeline.length - 1].type === 'stop') {
+            finalTimeline.pop();
+        }
+    }
+    
+    finalTimeline.push({
+        type: 'end',
+        title: finalTitle,
+        subtitle: finalSub,
+        timeStr: finalStatus === 'Active' ? 'Live' : `${formatShiftTime(checkOutTimeMs)}`,
+        timestamp: finalStatus === 'Active' ? Date.now() : checkOutTimeMs
+    });
+    let processedFinalTimeline = finalTimeline;
+    if (sessionState !== "ACTIVE") {
+        processedFinalTimeline = processedFinalTimeline.filter(item => item.title !== "Current Location");
+    }
+    
+    return { finalTimeline: processedFinalTimeline, totalMins, finalStatus };
+  }, [routeData]);
+  
+  const { finalTimeline: processedTimeline, totalMins, finalStatus } = timelineData;
+  const idleCount = processedTimeline.filter(item => item.type === 'stop').length;
+
   useEffect(() => {
     if (employeeId && date) {
       const abortController = new AbortController();
@@ -83,8 +410,23 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
       console.log("[DEBUG] GPS Raw Coords count:", res.data.locations ? res.data.locations.length : 0);
       
       // After fetching data, start road snapping
-      if (res.data.locations && res.data.locations.length >= 2) {
-         processRoadSnapping(res.data.locations);
+      let allLocs = [];
+      if (res.data.startLocation) allLocs.push(res.data.startLocation);
+      if (res.data.locations) allLocs = allLocs.concat(res.data.locations);
+      if (res.data.endLocation) allLocs.push(res.data.endLocation);
+      
+      const uniqueLocs = [];
+      const seen = new Set();
+      allLocs.forEach(loc => {
+          if (!seen.has(loc.timestamp)) {
+             seen.add(loc.timestamp);
+             uniqueLocs.push(loc);
+          }
+      });
+      allLocs = uniqueLocs.sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+      if (allLocs.length >= 2) {
+         processRoadSnapping(allLocs);
       }
     } catch (err) {
       if (axios.isCancel(err)) return;
@@ -101,45 +443,70 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
   const processRoadSnapping = async (locs) => {
     setSnapping(true);
     try {
-       // Split into colored segments
-       const segments = [];
-       let currentSegment = { color: locs[0].isRepeat ? 'red' : '#3b82f6', points: [[locs[0].latitude, locs[0].longitude]] };
-       
+       // Identify farthest point from start location to detect Return Route
+       const start = locs[0];
+       let maxDist = 0;
+       let farthestIdx = 0;
        for (let i = 1; i < locs.length; i++) {
-           const p = locs[i];
-           const nextColor = p.isRepeat ? 'red' : '#3b82f6';
-           
-           if (nextColor === currentSegment.color) {
-               currentSegment.points.push([p.latitude, p.longitude]);
-           } else {
-               currentSegment.points.push([p.latitude, p.longitude]);
-               segments.push(currentSegment);
-               currentSegment = { color: nextColor, points: [[p.latitude, p.longitude]] };
+           let d = getDistanceKm(start.latitude, start.longitude, locs[i].latitude, locs[i].longitude);
+           if (d > maxDist) {
+               maxDist = d;
+               farthestIdx = i;
            }
        }
-       segments.push(currentSegment);
 
-       // Snap each segment to roads
+       // Split route into two types
+       const onwardCoords = locs.slice(0, farthestIdx + 1);
+       const returnCoords = locs.slice(farthestIdx);
+
+       let segments = [];
+       if (onwardCoords.length > 1) {
+           segments.push({ color: '#3b82f6', points: onwardCoords.map(p => [p.latitude, p.longitude]) });
+       }
+       if (returnCoords.length > 1) { 
+           segments.push({ color: 'red', points: returnCoords.map(p => [p.latitude, p.longitude]) });
+       }
+
+       let cumulativeRoadDistance = 0;
+       
+       // Snap each segment to roads or fallback to tight raw points (which draws route but without perfectly snapped roads)
        const snapped = await Promise.all(segments.map(async (seg) => {
           if (seg.points.length < 2) return seg;
-          // Simple batching if segment is too long for OSRM
-          const BATCH_SIZE = 40;
+          const BATCH_SIZE = 80;
           let allPoints = [];
           for (let i = 0; i < seg.points.length; i += (BATCH_SIZE - 1)) {
              const batch = seg.points.slice(i, i + BATCH_SIZE);
              if (batch.length < 2) break;
              const res = await fetchRoadRoute(batch);
-             if (allPoints.length > 0) {
-               allPoints = [...allPoints, ...res.coordinates.slice(1)];
+             
+             if (res.coordinates && res.coordinates.length > 0) {
+                 if (!res.fallback && res.distance) {
+                     cumulativeRoadDistance += res.distance;
+                 }
+                 
+                 // Accumulate EXACTLY the Google string returned (road-snapped)
+                 // Use these snappedPoints to draw route
+                 if (allPoints.length > 0) {
+                     allPoints = [...allPoints, ...res.coordinates.slice(1)];
+                 } else {
+                     allPoints = res.coordinates;
+                 }
              } else {
-               allPoints = res.coordinates;
+                 console.error("Routing API returned empty.", res);
              }
+             
              if (seg.points.length > BATCH_SIZE) await new Promise(r => setTimeout(r, 100));
           }
+          
           return { ...seg, points: allPoints };
        }));
        
-       setSnappedSegments(snapped);
+       // Filter out segments where Google API completely failed to return snapped points
+       const validSnapped = snapped.filter(s => s.points && s.points.length >= 2);
+       setSnappedSegments(validSnapped);
+       if (cumulativeRoadDistance > 0) {
+           setRouteData(prev => ({ ...prev, totalDistanceKm: cumulativeRoadDistance }));
+       }
     } catch (e) {
        console.error("Road snapping failed:", e);
     } finally {
@@ -148,28 +515,8 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
   };
 
   const coloredPaths = useMemo(() => {
-    if (snappedSegments.length > 0) return snappedSegments;
-    if (!routeData || !routeData.locations || routeData.locations.length < 2) return [];
-    
-    const segments = [];
-    const locs = routeData.locations;
-    let currentSegment = { color: locs[0].isRepeat ? 'red' : '#3b82f6', points: [[locs[0].latitude, locs[0].longitude]] };
-    
-    for (let i = 1; i < locs.length; i++) {
-        const p = locs[i];
-        const nextColor = p.isRepeat ? 'red' : '#3b82f6';
-        
-        if (nextColor === currentSegment.color) {
-            currentSegment.points.push([p.latitude, p.longitude]);
-        } else {
-            currentSegment.points.push([p.latitude, p.longitude]);
-            segments.push(currentSegment);
-            currentSegment = { color: nextColor, points: [[p.latitude, p.longitude]] };
-        }
-    }
-    segments.push(currentSegment);
-    return segments;
-  }, [routeData, snappedSegments]);
+    return snappedSegments;
+  }, [snappedSegments]);
 
   const generateGoogleMapsUrl = useCallback(() => {
     if (!routeData) return '#';
@@ -316,43 +663,47 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                            </Marker>
                          )}
 
-                         {routeData.stopPoints?.map((stop, i) => (
-                           <Marker key={`stop-${i}`} position={[stop.latitude, stop.longitude]} icon={stopIcon}>
+                         {processedTimeline.filter(item => item.type === 'stop').map((stop, i) => (
+                           <Marker key={`stop-calc-${i}`} position={[stop.lat, stop.lng]} icon={stopIcon}>
                              <Popup className="premium-popup">
                                <div className="p-1">
                                  <h5 className="font-black text-red-600 uppercase text-[10px] mb-1">Stop Detected</h5>
-                                 <p className="font-bold text-sm text-gray-900">{stop.city || 'Location Unknown'}</p>
-                                 <p className="text-xs text-gray-700 mt-1 font-bold">Duration: {Math.round(stop.durationMinutes)} minutes</p>
-                                 <p className="text-[10px] text-gray-400 mt-1">{new Date(stop.startTime).toLocaleTimeString()} - {new Date(stop.endTime).toLocaleTimeString()}</p>
+                                 <p className="font-bold text-sm text-gray-900">{stop.subtitle || 'Location Unknown'}</p>
+                                 <p className="text-xs text-gray-700 mt-1 font-bold">Duration: {stop.durationText}</p>
+                                 <p className="text-[10px] text-gray-400 mt-1">{new Date(stop.timestamp).toLocaleTimeString()} - {new Date(stop.endTimestamp).toLocaleTimeString()}</p>
                                </div>
                              </Popup>
                            </Marker>
                          ))}
 
-                         {routeData.endLocation && (
-                           <Marker position={[routeData.endLocation.latitude, routeData.endLocation.longitude]} icon={endIcon}>
-                             <Popup className="premium-popup">
-                               <div className="p-1">
-                                 <h5 className="font-black text-gray-700 uppercase text-[10px] mb-1">Check-out Point</h5>
-                                 <p className="font-bold text-sm text-gray-900">{routeData.endLocation.city || 'End Location'}</p>
-                                 <p className="text-xs text-gray-500 mt-1">{new Date(routeData.endLocation.timestamp).toLocaleTimeString()}</p>
-                               </div>
-                             </Popup>
-                           </Marker>
-                         )}
+                         {(() => {
+                            const endLocToUse = routeData.endLocation || routeData.routeTracking?.endLocation || (routeData.locations?.length > 0 ? routeData.locations[routeData.locations.length - 1] : routeData.startLocation);
+                            if (!endLocToUse) return null;
+                            return (
+                               <Marker position={[endLocToUse.latitude, endLocToUse.longitude]} icon={endIcon}>
+                                 <Popup className="premium-popup">
+                                   <div className="p-1">
+                                     <h5 className="font-black text-gray-700 uppercase text-[10px] mb-1">{finalStatus === 'Active' ? 'Current Point' : 'Check-out Point'}</h5>
+                                     <p className="font-bold text-sm text-gray-900">{finalStatus}</p>
+                                     <p className="text-xs text-gray-500 mt-1">{finalStatus === 'Active' ? new Date(endLocToUse.timestamp || Date.now()).toLocaleTimeString() : new Date((timelineData && timelineData.finalTimeline && timelineData.finalTimeline.length > 0) ? timelineData.finalTimeline[timelineData.finalTimeline.length - 1].timestamp : endLocToUse.timestamp).toLocaleTimeString()}</p>
+                                   </div>
+                                 </Popup>
+                               </Marker>
+                            );
+                         })()}
                       </MapContainer>
                    </div>
                 </div>
 
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 shrink-0">
                    <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col justify-center">
-                     <span className="text-gray-400 text-[10px] font-black uppercase tracking-widest block mb-2 px-1">Active Hours</span>
+                     <span className="text-gray-400 text-[10px] font-black uppercase tracking-widest block mb-2 px-1">Active Time</span>
                      <div className="flex items-center gap-2">
                         <div className="p-2 bg-indigo-50 rounded-xl">
                           <Clock className="w-4 h-4 text-indigo-500" />
                         </div>
                         <span className="text-gray-900 font-black text-sm">
-                           {routeData.startedAt ? new Date(routeData.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'} - {routeData.endedAt ? new Date(routeData.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}
+                           {formatDurationReadable(totalMins)}
                         </span>
                      </div>
                    </div>
@@ -362,7 +713,7 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                    </div>
                    <div className="bg-orange-50/50 p-5 rounded-[2rem] border border-orange-100/50 shadow-sm flex flex-col justify-center">
                      <span className="text-orange-400 text-[10px] font-black uppercase tracking-widest block mb-1 px-1">Idle Points</span>
-                     <span className="text-orange-900 font-black text-2xl tracking-tighter">{routeData.stopPoints?.length || 0} <span className="text-xs uppercase opacity-40">stops</span></span>
+                     <span className="text-orange-900 font-black text-2xl tracking-tighter">{idleCount} <span className="text-xs uppercase opacity-40">stops</span></span>
                    </div>
                    <div className="bg-green-50/50 p-5 rounded-[2rem] border border-green-100/50 shadow-sm flex flex-col justify-center">
                      <span className="text-green-400 text-[10px] font-black uppercase tracking-widest block mb-1 px-1">Session Health</span>
@@ -394,87 +745,67 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                 <div className="flex-1 overflow-y-auto p-8 relative">
                    <div className="absolute left-[39px] top-8 bottom-8 w-0.5 bg-gray-100"></div>
                    
-                   <div className="space-y-10 relative">
-                      {(() => {
-                         const timelineItems = [];
-
-                         if (routeData.travelSessions) {
-                            routeData.travelSessions.forEach((ts, i) => {
-                               timelineItems.push({
-                                  type: 'session',
-                                  timeStr: `${new Date(ts.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-                                  endTimeStr: ts.endTime ? new Date(ts.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
-                                  title: `Transit Stage`,
-                                  subtitle: `${ts.startCity || 'Starting Area'} → ${ts.endCity || 'Target Area'}`,
-                                  value: `${(ts.distanceKm || 0).toFixed(2)} KM`,
-                                  timestamp: new Date(ts.startTime).getTime()
-                               });
-                            });
-                         }
-
-                         if (routeData.stopPoints) {
-                            routeData.stopPoints.forEach((sp, i) => {
-                               timelineItems.push({
-                                  type: 'stop',
-                                  timeStr: `${new Date(sp.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-                                  endTimeStr: new Date(sp.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                                  title: `Stationary`,
-                                  subtitle: sp.city || 'Unknown Location',
-                                  value: `${Math.round(sp.durationMinutes)}m`,
-                                  timestamp: new Date(sp.startTime).getTime()
-                               });
-                            });
-                         }
-
-                         timelineItems.sort((a, b) => a.timestamp - b.timestamp);
-
-                         return (
-                            <>
-                              {routeData.startLocation && (
-                                <div className="relative pl-12">
-                                  <div className="absolute left-0 w-8 h-8 bg-green-500 rounded-2xl flex items-center justify-center border-4 border-green-50 shadow-lg shadow-green-100 z-10">
-                                    <ShieldCheck className="w-4 h-4 text-white" />
-                                  </div>
-                                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-1">{new Date(routeData.startLocation.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                                  <h4 className="font-black text-gray-900 text-sm">Shift Started</h4>
-                                  <p className="text-xs text-gray-500 mt-1 font-medium">{routeData.startLocation.city || 'Initial Point'}</p>
-                                </div>
-                              )}
-
-                              {timelineItems.map((item, i) => (
-                                <div key={i} className="relative pl-12 group">
-                                  <div className={`absolute left-1 w-6 h-6 rounded-xl flex items-center justify-center border-2 z-10 transition-transform group-hover:scale-110 ${
-                                    item.type === 'stop' ? 'bg-white border-red-500' : 'bg-white border-indigo-500'
-                                  }`}>
-                                    {item.type === 'stop' ? <Flag className="w-3 h-3 text-red-500" /> : <Navigation className="w-3 h-3 text-indigo-500" />}
-                                  </div>
-                                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-1">{item.timeStr} – {item.endTimeStr}</p>
-                                  <div className="flex justify-between items-start pr-2">
+                    <div className="space-y-6 relative ml-6">
+                       <div className="absolute left-[7px] top-4 bottom-4 w-0.5 bg-gray-200/60 z-0"></div>
+                       
+                       {processedTimeline.map((item, i) => {
+                          if (item.type === 'start') {
+                             return (
+                               <div key={i} className="relative z-10">
+                                 <div className="flex items-start gap-4">
+                                    <div className="w-4 h-4 rounded-full border-4 border-indigo-600 bg-white mt-1 shadow-sm shrink-0"></div>
                                     <div>
-                                      <h4 className={`font-black text-sm ${item.type === 'stop' ? 'text-red-600' : 'text-indigo-600'}`}>{item.title}</h4>
-                                      <p className="text-xs text-gray-500 mt-1 font-medium leading-relaxed">{item.subtitle}</p>
+                                       <h4 className="font-bold text-gray-900 text-sm">{item.title}</h4>
+                                       <p className="text-sm text-gray-600 leading-tight mt-0.5">{item.subtitle}</p>
+                                       <p className="text-xs text-indigo-600 font-semibold mt-1">{item.timeStr}</p>
                                     </div>
-                                    <span className={`text-[10px] font-black px-2 py-1 rounded-lg ${item.type === 'stop' ? 'bg-red-50 text-red-600' : 'bg-indigo-50 text-indigo-600'}`}>
-                                      {item.value}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
-
-                              {routeData.endLocation && (
-                                <div className="relative pl-12">
-                                  <div className="absolute left-0 w-8 h-8 bg-gray-800 rounded-2xl flex items-center justify-center border-4 border-gray-100 shadow-lg shadow-gray-200 z-10">
-                                    <LogOut className="w-4 h-4 text-white" />
-                                  </div>
-                                  <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-1">{new Date(routeData.endLocation.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                                  <h4 className="font-black text-gray-800 text-sm">Shift Ended</h4>
-                                  <p className="text-xs text-gray-500 mt-1 font-medium">{routeData.endLocation.city || 'Final Point'}</p>
-                                </div>
-                              )}
-                            </>
-                         )
-                      })()}
-                   </div>
+                                 </div>
+                               </div>
+                             );
+                          } else if (item.type === 'end') {
+                             return (
+                               <div key={i} className="relative z-10">
+                                 <div className="flex items-start gap-4">
+                                    <div className="w-4 h-4 rounded-full border-4 border-gray-600 bg-white mt-1 shadow-sm shrink-0"></div>
+                                    <div>
+                                       <h4 className="font-bold text-gray-900 text-sm">{item.title}</h4>
+                                       <p className="text-sm text-gray-600 leading-tight mt-0.5">{item.subtitle}</p>
+                                       <p className="text-xs text-gray-500 font-semibold mt-1">{item.timeStr || '-'}</p>
+                                    </div>
+                                 </div>
+                               </div>
+                             );
+                          } else if (item.type === 'stop') {
+                             return (
+                               <div key={i} className="relative z-10">
+                                 <div className="flex items-start gap-4">
+                                    <div className="w-4 h-4 rounded-full border-4 border-orange-500 bg-orange-500 mt-1 shadow-sm shrink-0"></div>
+                                    <div>
+                                       <h4 className="font-bold text-gray-900 text-sm">{item.title}</h4>
+                                       <p className="text-sm text-gray-600 leading-tight mt-0.5">{item.subtitle}</p>
+                                       <p className="text-xs text-orange-600 font-semibold mt-1">{item.timeRange} ({formatDurationReadable(item.durationMins)})</p>
+                                    </div>
+                                 </div>
+                               </div>
+                             );
+                          } else if (item.type === 'transit') {
+                             return (
+                               <div key={i} className="relative z-0">
+                                 <div className="flex items-center gap-3 py-2">
+                                    <div className="w-6 flex justify-center shrink-0 text-green-500 font-bold opacity-80">
+                                       ↓
+                                    </div>
+                                    <div className="flex flex-col bg-green-50/50 px-3 py-1.5 rounded-lg border border-green-100">
+                                       <h4 className="font-bold text-green-700 text-xs flex items-center gap-1.5"><span className="text-[10px]">🟢</span> In Transit</h4>
+                                       <p className="text-xs text-green-600 font-medium opacity-80 mt-0.5">{item.timeRange} ({formatDurationReadable(item.durationMins)})</p>
+                                    </div>
+                                 </div>
+                               </div>
+                             );
+                          }
+                          return null;
+                       })}
+                    </div>
                 </div>
               </div>
             </div>

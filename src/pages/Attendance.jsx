@@ -5,6 +5,7 @@ import { format } from 'date-fns';
 import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X, Activity } from 'lucide-react';
 import RouteTrackingModal from '../components/RouteTrackingModal';
 import { LocationTracker } from '../services/LocationTracker';
+import { getSyncedTime } from '../utils/timeSync';
 
 let activeLocationTracker = null;
 
@@ -33,6 +34,17 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
   const todayStr = format(nowIST, 'yyyy-MM-dd');
 
+  const formatTimeStr = (timeStr) => {
+    if (!timeStr || timeStr === '--:--' || timeStr === '-') return timeStr;
+    const parts = timeStr.split(':');
+    if (parts.length < 2) return timeStr;
+    let h = parseInt(parts[0], 10);
+    const m = parts[1];
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${m} ${ampm}`;
+  };
+
 
   useEffect(() => {
     if (globalRecords) {
@@ -55,9 +67,15 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         }
         
         // Start tracking if checked in but not checked out (resume session)
-        if (!userTodayRecord.checkOut && !activeLocationTracker) {
+        if (!userTodayRecord.checkOut && !userTodayRecord.isCheckedOut && !activeLocationTracker) {
              activeLocationTracker = new LocationTracker(user.id);
              activeLocationTracker.startTracking();
+        }
+        
+        // Disable tracking if checked out
+        if ((userTodayRecord.checkOut || userTodayRecord.isCheckedOut) && activeLocationTracker) {
+             activeLocationTracker.stopTracking();
+             activeLocationTracker = null;
         }
         
       } else {
@@ -132,7 +150,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
     try {
       const position = await getExactLocation();
       const { latitude, longitude } = position.coords;
-      const checkInTimeStr = new Date().toISOString();
+      const checkInTimeStr = getSyncedTime().toISOString();
       
       localStorage.setItem(`checkIn_${user.id}_${todayStr}`, JSON.stringify({
         checkInTime: checkInTimeStr,
@@ -205,7 +223,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
       return; // Stop checkout if no fresh lock
     }
 
-    const checkOutTimeDate = new Date();
+    const checkOutTimeDate = getSyncedTime();
     const checkInDataStr = localStorage.getItem(`checkIn_${user.id}_${todayStr}`);
     
     let diffHrs = 0;
@@ -372,12 +390,12 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                 <div className="flex gap-4">
                    <div className="flex flex-col items-center sm:items-start text-sm bg-green-50 px-4 py-2 rounded-lg border border-green-100">
                      <span className="text-gray-500 flex items-center gap-1"><LogIn className="w-4 h-4 text-green-600"/> Check-in</span>
-                     <span className="font-bold text-gray-900">{todayRecord.checkIn}</span>
+                     <span className="font-bold text-gray-900">{formatTimeStr(todayRecord.checkIn)}</span>
                    </div>
                    {todayRecord.checkOut ? (
                       <div className="flex flex-col items-center sm:items-start text-sm bg-blue-50 px-4 py-2 rounded-lg border border-blue-100">
                         <span className="text-gray-500 flex items-center gap-1"><LogOut className="w-4 h-4 text-blue-600"/> Check-out</span>
-                        <span className="font-bold text-gray-900">{todayRecord.checkOut}</span>
+                        <span className="font-bold text-gray-900">{formatTimeStr(todayRecord.checkOut)}</span>
                       </div>
                    ) : (
                       <div className="flex flex-col items-center sm:items-start text-sm bg-yellow-50 px-4 py-2 rounded-lg border border-yellow-100">
@@ -394,7 +412,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
           </div>
           
           {/* Tracking indicator display */}
-          {todayRecord && !todayRecord.checkOut && (
+          {todayRecord && !todayRecord.isCheckedOut && !todayRecord.checkOut && (
              <div className="mt-3 flex items-center gap-2 justify-center sm:justify-start pt-3 border-t border-gray-100">
                <span className="relative flex h-3 w-3">
                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -553,11 +571,11 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                 <div className="grid grid-cols-2 gap-3 mb-4">
                    <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
                       <p className="text-[10px] text-gray-400 uppercase font-black mb-1">Check In</p>
-                      <p className="text-sm font-bold text-gray-700">{record.checkIn || '--:--'}</p>
+                      <p className="text-sm font-bold text-gray-700">{formatTimeStr(record.checkIn) || '--:--'}</p>
                    </div>
                    <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100">
                       <p className="text-[10px] text-gray-400 uppercase font-black mb-1">Check Out</p>
-                      <p className="text-sm font-bold text-gray-700">{record.checkOut || '--:--'}</p>
+                      <p className="text-sm font-bold text-gray-700">{formatTimeStr(record.checkOut) || '--:--'}</p>
                    </div>
                 </div>
 
@@ -581,7 +599,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                            </div>
                         </a>
                      )}
-                     {record.currentLocation && !record.checkOut && (
+                     {record.currentLocation && !record.isCheckedOut && !record.checkOut && (
                         <div className="flex items-center gap-3 p-2 rounded-lg bg-red-50 border border-red-100 animate-pulse">
                            <div className="bg-red-500 p-2 rounded-lg"><Activity className="w-4 h-4 text-white"/></div>
                            <div className="text-left"><span className="text-xs font-black text-red-600 uppercase tracking-widest">Employee is Live</span></div>
@@ -669,10 +687,10 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                       </td>
                     )}
                     <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-500">
-                      {record.checkIn || '-'}
+                      {formatTimeStr(record.checkIn) || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-500">
-                      {record.checkOut || '-'}
+                      {formatTimeStr(record.checkOut) || '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-500">
                       <div className="flex flex-col gap-1 text-xs">
@@ -692,7 +710,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                              </a>
                            </div>
                         )}
-                        {record.currentLocation && !record.checkOut ? <a href={`https://www.google.com/maps?q=${record.currentLocation.lat},${record.currentLocation.lng}`} target="_blank" rel="noreferrer" className="text-red-500 hover:text-red-700 font-semibold flex items-center gap-1 animate-pulse"><MapPin className="w-4 h-4" /> LIVE</a> : null}
+                        {record.currentLocation && !record.isCheckedOut && !record.checkOut ? <a href={`https://www.google.com/maps?q=${record.currentLocation.lat},${record.currentLocation.lng}`} target="_blank" rel="noreferrer" className="text-red-500 hover:text-red-700 font-semibold flex items-center gap-1 animate-pulse"><MapPin className="w-4 h-4" /> LIVE</a> : null}
                         
                         {record.checkInLocation && (
                            <div className="flex flex-col gap-2 mt-1.5">

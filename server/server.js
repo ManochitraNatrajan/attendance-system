@@ -34,6 +34,8 @@ const attendanceSchema = new mongoose.Schema({
   date: { type: String, required: true, index: true }, 
   checkIn: { type: String }, 
   checkOut: { type: String, default: null }, 
+  checkoutType: { type: String, enum: ['manual', 'auto'], default: null },
+  isCheckedOut: { type: Boolean, default: false },
   status: { type: String, default: 'Pending' }, 
   checkInLocation: { lat: Number, lng: Number },
   checkInLocationName: { type: String, default: '' },
@@ -137,10 +139,13 @@ mongoose.connect(MONGODB_URI)
       if (unclosedSessions.length > 0) {
         console.log(`Found ${unclosedSessions.length} unclosed old sessions. Auto-closing them.`);
         for (const session of unclosedSessions) {
-          session.checkOut = "23:59:59";
+          if (session.isCheckedOut) continue;
+          session.checkOut = "23:59:00";
+          session.checkoutType = "auto";
+          session.isCheckedOut = true;
           session.status = "Auto Closed";
           if (session.routeTracking && !session.routeTracking.endedAt) {
-             session.routeTracking.endedAt = new Date(session.date + "T23:59:59Z");
+             session.routeTracking.endedAt = new Date(`${session.date}T23:59:00+05:30`);
           }
           await session.save();
         }
@@ -163,34 +168,36 @@ mongoose.connect(MONGODB_URI)
   })
   .catch(err => console.error('MongoDB connection error:', err));
 
-// Auto Checkout Cron Job at 11:31 PM EVERY DAY
-cron.schedule('31 23 * * *', async () => {
-  console.log("Running Auto-checkout CRON Job at 11:31 PM...");
+// Auto Checkout Cron Job at 11:59 PM EVERY DAY
+cron.schedule('59 23 * * *', async () => {
+  console.log("Running Auto-checkout CRON Job at 11:59 PM...");
   try {
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
-    const nowTime = format(nowIST, 'HH:mm:ss');
     
     const unclosedAttendances = await Attendance.find({ date: today, checkOut: null });
     
     for (const record of unclosedAttendances) {
-      record.checkOut = nowTime;
+      if (record.isCheckedOut) continue;
+      record.checkOut = "23:59:00";
+      record.checkoutType = "auto";
+      record.isCheckedOut = true;
       const checkInTime = record.checkIn;
       const inDate = new Date(`1970-01-01T${checkInTime}Z`);
-      const outDate = new Date(`1970-01-01T${nowTime}Z`);
+      const outDate = new Date(`1970-01-01T23:59:00Z`);
       const diffHours = (outDate - inDate) / (1000 * 60 * 60);
       
       record.status = 'Auto Closed'; // Keep it Auto Closed but effectively treated by payroll depending on diffHours
       
       if (record.routeTracking && !record.routeTracking.endedAt) {
           const lastLoc = record.routeTracking.locations.length > 0 ? record.routeTracking.locations[record.routeTracking.locations.length - 1] : null;
-          record.routeTracking.endedAt = new Date();
+          record.routeTracking.endedAt = new Date(`${today}T23:59:00+05:30`);
           if (lastLoc) {
             record.routeTracking.endLocation = {
                latitude: lastLoc.latitude,
                longitude: lastLoc.longitude,
                city: lastLoc.city || '',
-               timestamp: new Date()
+               timestamp: new Date(`${today}T23:59:00+05:30`)
             };
           }
       }
@@ -256,7 +263,11 @@ const getTransporter = async () => {
   return etherealTransporter;
 };
 
-// === Auth API ===
+// === Auth & Utility API ===
+app.get('/api/time', (req, res) => {
+  res.json({ serverTime: Date.now() });
+});
+
 app.get('/api/health', (req, res) => {
   const isConnected = mongoose.connection.readyState === 1;
   res.json({ status: isConnected ? 'online' : 'database_disconnected' });
@@ -561,9 +572,11 @@ app.post('/api/attendance/check-out', async (req, res) => {
     
     const record = await Attendance.findOne({ employeeId, date: today });
     if (!record) return res.status(404).json({ message: 'No check-in record found for today' });
-    if (record.checkOut) return res.status(400).json({ message: 'Already checked out today' });
+    if (record.checkOut || record.isCheckedOut) return res.status(400).json({ message: 'Already checked out today' });
     
     record.checkOut = nowTime;
+    record.checkoutType = "manual";
+    record.isCheckedOut = true;
     
     const checkInTime = record.checkIn;
     const inDate = new Date(`1970-01-01T${checkInTime}Z`);
@@ -824,6 +837,82 @@ app.get('/api/salary/download-payslip/:recordId', async (req, res) => {
 
 // === Route Tracking API ===
 
+app.post('/api/route/snap', async (req, res) => {
+  try {
+    let { coordinates } = req.body;
+    if (!coordinates || coordinates.length < 2) {
+      return res.json({ snappedPoints: null, distance: 0 });
+    }
+    
+    // Prune identical points and obvious noise
+    let filtered = [coordinates[0]];
+    for (let i = 1; i < coordinates.length; i++) {
+        const prev = filtered[filtered.length - 1];
+        const curr = coordinates[i];
+        if (getDistanceKm(prev.lat, prev.lng, curr.lat, curr.lng) > 0.01) {
+             filtered.push(curr);
+        }
+    }
+    if (filtered[filtered.length - 1] !== coordinates[coordinates.length - 1]) {
+       filtered[filtered.length - 1] = coordinates[coordinates.length - 1];
+    }
+    
+    let sampled = [];
+    sampled.push(filtered[0]);
+    const maxPoints = 100;
+    
+    if (filtered.length > 2) {
+      const intermediate = filtered.slice(1, filtered.length - 1);
+      if (intermediate.length <= maxPoints - 2) {
+         sampled.push(...intermediate);
+      } else {
+         // simple sampling strategy
+         const step = intermediate.length / (maxPoints - 2);
+         for (let i = 0; i < maxPoints - 2; i++) {
+            sampled.push(intermediate[Math.floor(i * step)]);
+         }
+      }
+    }
+    sampled.push(filtered[filtered.length - 1]);
+    
+    const pathStr = sampled.map(p => `${p.lat},${p.lng}`).join('|');
+    
+    const API_KEY = process.env.GOOGLE_MAPS_API_KEY || '';
+    if (!API_KEY) {
+       console.warn("GOOGLE_MAPS_API_KEY not configured. Falling back to straight lines.");
+       return res.status(400).json({ message: "API key missing" });
+    }
+    
+    const url = `https://roads.googleapis.com/v1/snapToRoads?path=${pathStr}&interpolate=true&key=${API_KEY}`;
+    
+    const gRes = await axios.get(url);
+    
+    if (!gRes.data.snappedPoints) {
+       console.error("Google Roads API Error:", gRes.data);
+       return res.status(400).json({ message: `Google Roads API Error` });
+    }
+    
+    const snappedCoords = gRes.data.snappedPoints.map(p => ({
+        lat: p.location.latitude,
+        lng: p.location.longitude
+    }));
+
+    let distance = 0;
+    for (let i = 0; i < snappedCoords.length - 1; i++) {
+        distance += getDistanceKm(snappedCoords[i].lat, snappedCoords[i].lng, snappedCoords[i+1].lat, snappedCoords[i+1].lng);
+    }
+    
+    res.json({ snappedPoints: snappedCoords, distance: distance });
+  } catch (err) {
+    if (err.response && err.response.data) {
+       console.error("Route proxy failed", err.response.data);
+    } else {
+       console.error("Route proxy failed", err);
+    }
+    res.status(500).json({ message: "Server Error routing path" });
+  }
+});
+
 // Helper to calculate distance in KM
 const getDistanceKm = (lat1, lon1, lat2, lon2) => {
   const R = 6371; // Earth radius in km
@@ -867,8 +956,10 @@ app.post('/api/location/update', async (req, res) => {
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
 
-    const record = await Attendance.findOne({ employeeId, date: today, checkOut: null });
-    if (!record) return res.status(404).json({ message: 'No active check-in record found for tracking' });
+    const record = await Attendance.findOne({ employeeId, date: today });
+    if (!record || record.isCheckedOut || record.checkOut) {
+       return res.status(404).json({ message: 'Active session ended. Tracking should stop.' });
+    }
     if (!record.routeTracking || !record.routeTracking.startedAt) {
       return res.status(400).json({ message: 'Route tracking not initialized' });
     }
@@ -1036,6 +1127,12 @@ app.get('/api/location/history/:employeeId/:date', async (req, res) => {
     }
     
     const tracking = record.routeTracking;
+    tracking.checkIn = record.checkIn;
+    tracking.checkOut = record.checkOut;
+    tracking.date = record.date;
+    tracking.isCheckedOut = record.isCheckedOut;
+    tracking.checkoutType = record.checkoutType;
+    tracking.status = record.status;
 
     // Dynamically build Travel Sessions
     let sessions = [];

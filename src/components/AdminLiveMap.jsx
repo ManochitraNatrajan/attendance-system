@@ -61,6 +61,29 @@ export default function AdminLiveMap({ onClose }) {
 
   const selectedEmployee = activeEmployees[selectedEmployeeId] || null;
 
+  const formatTime = (timeData) => {
+    if (!timeData || timeData === '-') return '-';
+    let h, m;
+    if (typeof timeData === 'string' && timeData.includes('T')) {
+      const d = new Date(timeData);
+      h = d.getHours();
+      m = d.getMinutes().toString().padStart(2, '0');
+    } else if (typeof timeData === 'number' || timeData instanceof Date) {
+      const d = new Date(timeData);
+      h = d.getHours();
+      m = d.getMinutes().toString().padStart(2, '0');
+    } else if (typeof timeData === 'string' && timeData.includes(':')) {
+      const parts = timeData.split(':');
+      h = parseInt(parts[0], 10);
+      m = parts[1];
+    } else {
+      return timeData;
+    }
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${m} ${ampm}`;
+  };
+
   useEffect(() => {
     const fetchActiveSessions = async () => {
       try {
@@ -253,26 +276,8 @@ export default function AdminLiveMap({ onClose }) {
         return;
       }
 
-      // Fallback to straight lines logic if no snapped history yet
-      if (emp.history.length < 2) return;
-      
-      const segments = [];
-      let currentSegment = { color: emp.history[0].isRepeat ? 'red' : '#3b82f6', points: [[emp.history[0].latitude, emp.history[0].longitude]] };
-      
-      for (let i = 1; i < emp.history.length; i++) {
-        const p = emp.history[i];
-        const nextColor = p.isRepeat ? 'red' : '#3b82f6';
-        
-        if (nextColor === currentSegment.color) {
-          currentSegment.points.push([p.latitude, p.longitude]);
-        } else {
-          currentSegment.points.push([p.latitude, p.longitude]);
-          segments.push(currentSegment);
-          currentSegment = { color: nextColor, points: [[p.latitude, p.longitude]] };
-        }
-      }
-      segments.push(currentSegment);
-      paths[emp.id] = segments;
+      // Fallback to straight lines logic removed, ONLY rendering snapped paths
+      return;
     });
     return paths;
   }, [activeEmployees]);
@@ -346,7 +351,7 @@ export default function AdminLiveMap({ onClose }) {
                           </div>
                           <div className="bg-white/60 p-2 rounded-2xl border border-white flex flex-col items-center justify-center">
                              <span className="text-[9px] text-gray-400 font-black uppercase tracking-tighter">Last Seen</span>
-                             <span className="text-xs font-extrabold text-gray-700">{new Date(emp.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                             <span className="text-xs font-extrabold text-gray-700">{formatTime(emp.timestamp)}</span>
                           </div>
                        </div>
                     </div>
@@ -438,7 +443,7 @@ export default function AdminLiveMap({ onClose }) {
                                            </p>
                                            <p className="text-[10px] text-gray-500 font-bold uppercase flex justify-between">
                                               <span>Check-in</span>
-                                              <span className="text-gray-900">{emp.checkIn || '-'}</span>
+                                              <span className="text-gray-900">{formatTime(emp.checkIn)}</span>
                                            </p>
                                            <p className="text-[10px] text-gray-500 font-bold uppercase flex justify-between">
                                               <span>Distance</span>

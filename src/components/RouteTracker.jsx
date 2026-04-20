@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import axios from 'axios';
+import { getSyncedTimeNow } from '../utils/timeSync';
 
 export default function RouteTracker() {
   const watchIdRef = useRef(null);
@@ -23,7 +24,7 @@ export default function RouteTracker() {
         await axios.post('/api/location/update', {
           employeeId: user.id, lat, lng, city
         });
-        lastSyncRef.current = { time: Date.now(), lat, lng };
+        lastSyncRef.current = { time: getSyncedTimeNow(), lat, lng };
       } catch (e) {
         // Silently fail on network drop to prevent alerting the user
       }
@@ -61,7 +62,7 @@ export default function RouteTracker() {
         watchIdRef.current = navigator.geolocation.watchPosition(
           (pos) => {
             const { latitude, longitude, accuracy } = pos.coords;
-            const now = Date.now();
+            const now = getSyncedTimeNow();
             
             const timeDiff = now - lastSyncRef.current.time;
             const dist = getDistance(latitude, longitude, lastSyncRef.current.lat, lastSyncRef.current.lng);

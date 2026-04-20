@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import axios from 'axios';
+import { getSyncedTime, getSyncedTimeNow } from '../utils/timeSync';
 
 // Haversine formula to calculate distance between two points in meters
 const getDistance = (lat1, lon1, lat2, lon2) => {
@@ -29,7 +30,7 @@ export default function GlobalLocationTracker() {
         await axios.post('/api/attendance/live-location', {
           employeeId: user.id, lat, lng
         });
-        lastSyncRef.current = { lat, lng, time: Date.now() };
+        lastSyncRef.current = { lat, lng, time: getSyncedTimeNow() };
       } catch (e) {
         // Silently fail on network drop
       }
@@ -54,11 +55,11 @@ export default function GlobalLocationTracker() {
         watchIdRef.current = navigator.geolocation.watchPosition(
           (pos) => {
             const { latitude, longitude, accuracy } = pos.coords;
-            const now = Date.now();
+            const now = getSyncedTimeNow();
             
             // Update local storage for immediate UI needs
             localStorage.setItem(`currentLoc_${user.id}`, JSON.stringify({
-              lat: latitude, lng: longitude, timestamp: new Date().toISOString()
+              lat: latitude, lng: longitude, timestamp: getSyncedTime().toISOString()
             }));
 
             // SMART SYNC LOGIC:
