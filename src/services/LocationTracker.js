@@ -22,7 +22,7 @@ export class LocationTracker {
     this.healthCheckTimer = null;
     this.lastFixTime = Date.now();
     
-    const host = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+    const host = axios.defaults.baseURL;
     this.socket = io(host, { autoConnect: false });
 
     window.addEventListener('online', () => {

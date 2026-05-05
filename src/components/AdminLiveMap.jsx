@@ -159,7 +159,7 @@ export default function AdminLiveMap({ onClose }) {
 
     fetchActiveSessions();
 
-    const host = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+    const host = axios.defaults.baseURL;
     socketRef.current = io(host);
 
     socketRef.current.on('live-route-update', async (data) => {

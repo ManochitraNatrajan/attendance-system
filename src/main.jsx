@@ -4,8 +4,8 @@ import axios from 'axios'
 import './index.css'
 import App from './App.jsx'
 
-// Tell the frontend to permanently talk to your live backend on Render
-axios.defaults.baseURL = 'http://localhost:5000'; // Point to local server instead of Render
+// Dynamic API Base URL for local and production
+axios.defaults.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, info: null }; }
   static getDerivedStateFromError(error) { return { hasError: true }; }
