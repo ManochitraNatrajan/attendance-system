@@ -19,6 +19,8 @@ export class LocationTracker {
     this.lastSendTime = 0;
     this.lastSentLat = null;
     this.lastSentLng = null;
+    this.healthCheckTimer = null;
+    this.lastFixTime = Date.now();
     
     const host = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
     this.socket = io(host, { autoConnect: false });
@@ -100,6 +102,9 @@ export class LocationTracker {
         alert("CRITICAL: GPS tracking requires HTTPS. Please check your connection.");
     }
 
+    this.lastFixTime = Date.now();
+    this.startHealthCheck();
+
     try {
       this.watcherId = await BackgroundGeolocation.addWatcher(
         {
@@ -114,8 +119,8 @@ export class LocationTracker {
             this.handleError(error);
             return;
           }
-          // Discard inaccurate points (> 50m) to fix 'Salem issue'
-          if (location && (location.accuracy <= 50)) {
+          // Discard highly inaccurate points (> 2000m) to allow normal tracking
+          if (location && (location.accuracy <= 2000)) {
             console.log(`[GPS] Lock: ${location.latitude}, ${location.longitude} (+/- ${location.accuracy}m)`);
             this.processLocationUpdate(location.latitude, location.longitude);
           } else {
@@ -129,6 +134,38 @@ export class LocationTracker {
     }
   }
 
+  startHealthCheck() {
+    if (this.healthCheckTimer) clearInterval(this.healthCheckTimer);
+    this.healthCheckTimer = setInterval(() => {
+        // If no fix has been received for 15 seconds, verify location access
+        if (Date.now() - this.lastFixTime > 15000) {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        if (pos.coords.accuracy <= 2000) {
+                            this.lastFixTime = Date.now();
+                            window.dispatchEvent(new CustomEvent('gps-status', { detail: { error: false } }));
+                        }
+                    },
+                    (err) => {
+                        this.handleError(err, true); // true for silent check
+                    },
+                    { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+                );
+            }
+        }
+
+        // Explicitly check permissions
+        if (navigator.permissions && navigator.permissions.query) {
+            navigator.permissions.query({ name: 'geolocation' }).then(result => {
+                if (result.state === 'denied') {
+                    window.dispatchEvent(new CustomEvent('gps-status', { detail: { error: true } }));
+                }
+            }).catch(() => {});
+        }
+    }, 5000);
+  }
+
   startWebFallback() {
     if (!navigator.geolocation) {
         alert("This device does not support GPS tracking.");
@@ -138,15 +175,15 @@ export class LocationTracker {
     this.watcherId = navigator.geolocation.watchPosition(
         (pos) => {
             const { latitude, longitude, accuracy } = pos.coords;
-            // Strict discard > 50m
-            if (accuracy <= 50) {
+            // Strict discard > 2000m
+            if (accuracy <= 2000) {
                 console.log(`[GPS] Web Lock: ${latitude.toFixed(6)}, ${longitude.toFixed(6)} (+/- ${accuracy.toFixed(1)}m)`);
                 this.processLocationUpdate(latitude, longitude);
             } else {
                 console.warn(`[GPS] Inaccurate point discarded: ${accuracy.toFixed(1)}m`);
             }
         },
-        (err) => this.handleError(err),
+        (err) => this.handleError(err, false),
         { 
             enableHighAccuracy: true, 
             timeout: 15000, // User requested 15s
@@ -155,9 +192,11 @@ export class LocationTracker {
     );
   }
 
-  handleError(error) {
+  handleError(error, isSilentCheck = false) {
     console.error("[GPS] ERROR:", error);
+    window.dispatchEvent(new CustomEvent('gps-status', { detail: { error: true } }));
     
+    if (isSilentCheck) return;
     // Case 1: Permission Denied
     if (error.code === 1 || error.code === "NOT_AUTHORIZED") {
         alert("GPS ERROR: Permission denied. You MUST enable 'Precise Location' and 'Allow All The Time' in settings for tracking to work.");
@@ -183,6 +222,8 @@ export class LocationTracker {
   }
 
   processLocationUpdate(lat, lng) {
+    this.lastFixTime = Date.now();
+    window.dispatchEvent(new CustomEvent('gps-status', { detail: { error: false } }));
     const now = getSyncedTimeNow();
     let distanceMoved = 0;
     
@@ -228,6 +269,10 @@ export class LocationTracker {
   }
 
   async stopTracking() {
+    if (this.healthCheckTimer) {
+        clearInterval(this.healthCheckTimer);
+        this.healthCheckTimer = null;
+    }
     if (this.retryTimer) {
         clearTimeout(this.retryTimer);
         this.retryTimer = null;
@@ -259,8 +304,8 @@ export class LocationTracker {
             (pos) => {
                 bestPos = pos;
                 console.log(`[GPS] Precision search: ${pos.coords.accuracy.toFixed(1)}m`);
-                // Use strict 50m but resolve immediately if < 20m
-                if (pos.coords.accuracy <= 20) {
+                // Use strict 2000m but resolve immediately if < 100m
+                if (pos.coords.accuracy <= 100) {
                     cleanup();
                     resolve(pos);
                 }
@@ -276,12 +321,12 @@ export class LocationTracker {
 
         timeoutId = setTimeout(() => {
             cleanup();
-            if (bestPos && bestPos.coords.accuracy <= 50) {
+            if (bestPos && bestPos.coords.accuracy <= 2000) {
                 console.log(`[GPS] Fresh search complete. Accuracy: ${bestPos.coords.accuracy.toFixed(1)}m`);
                 resolve(bestPos);
             } else {
                 const currentAcc = bestPos ? `${bestPos.coords.accuracy.toFixed(1)}m` : 'No Signal';
-                reject(new Error(`Location too inaccurate (${currentAcc}) or timed out. Accuracy must be < 50m. Please move to an open area.`));
+                reject(new Error(`Location too inaccurate (${currentAcc}) or timed out. Accuracy must be < 2000m. Please move to an open area.`));
             }
         }, 16000);
     });

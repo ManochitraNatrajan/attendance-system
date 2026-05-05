@@ -24,7 +24,8 @@ const employeeSchema = new mongoose.Schema({
   contact: { type: String, required: true, index: true },
   password: { type: String, required: true },
   monthlySalary: { type: Number, default: 0 },
-  dailyWage: { type: Number, default: 0 }
+  dailyWage: { type: Number, default: 0 },
+  status: { type: String, default: 'active' }
 }, { timestamps: true });
 employeeSchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d, r) => { r.id = r._id.toString(); delete r._id; }});
 const Employee = mongoose.model('Employee', employeeSchema);
@@ -32,6 +33,7 @@ const Employee = mongoose.model('Employee', employeeSchema);
 const attendanceSchema = new mongoose.Schema({
   employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true, index: true },
   date: { type: String, required: true, index: true }, 
+  monthYear: { type: String, index: true },
   checkIn: { type: String }, 
   checkOut: { type: String, default: null }, 
   checkoutType: { type: String, enum: ['manual', 'auto'], default: null },
@@ -46,6 +48,16 @@ const attendanceSchema = new mongoose.Schema({
   distanceTraveled: { type: Number, default: 0 },
   travelExpense: { type: Number, default: 0 },
   foodExpense: { type: Number, default: 0 },
+  workPoint1: { type: String, default: '' },
+  workPoint2: { type: String, default: '' },
+  workPoint3: { type: String, default: '' },
+  workPoint4: { type: String, default: '' },
+  workPoint5: { type: String, default: '' },
+  workPoint6: { type: String, default: '' },
+  workPoint7: { type: String, default: '' },
+  workPoint8: { type: String, default: '' },
+  workPoint9: { type: String, default: '' },
+  workPoint10: { type: String, default: '' },
   workDetails: [{ type: String }],
   routeTracking: {
     startedAt: Date,
@@ -107,6 +119,17 @@ const geofenceZoneSchema = new mongoose.Schema({
 }, { timestamps: true });
 geofenceZoneSchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d, r) => { r.id = r._id.toString(); delete r._id; }});
 const GeofenceZone = mongoose.model('GeofenceZone', geofenceZoneSchema);
+
+const salaryArchiveSchema = new mongoose.Schema({
+  employeeName: { type: String, required: true },
+  month: { type: String, required: true }, // Format YYYY-MM
+  totalWorkingDays: { type: Number, default: 0 },
+  totalWorkingHours: { type: Number, default: 0 },
+  finalSalary: { type: Number, default: 0 }
+}, { timestamps: true });
+salaryArchiveSchema.set('toJSON', { virtuals: true, versionKey: false, transform: (d, r) => { r.id = r._id.toString(); delete r._id; }});
+const SalaryArchive = mongoose.model('SalaryArchive', salaryArchiveSchema);
+
 // =======================
 
 const app = express();
@@ -143,9 +166,14 @@ mongoose.connect(MONGODB_URI)
           session.checkOut = "23:59:00";
           session.checkoutType = "auto";
           session.isCheckedOut = true;
-          session.status = "Auto Closed";
+          
+          const inTime = new Date(`1970-01-01T${session.checkIn}Z`);
+          const outTime = new Date(`1970-01-01T23:59:00Z`);
+          const diffHrs = (outTime - inTime) / (1000 * 60 * 60);
+          session.status = diffHrs >= 4 ? "Present (Auto Closed)" : "Half Day Present (Auto Closed)";
           if (session.routeTracking && !session.routeTracking.endedAt) {
              session.routeTracking.endedAt = new Date(`${session.date}T23:59:00+05:30`);
+             session.markModified('routeTracking');
           }
           await session.save();
         }
@@ -182,12 +210,11 @@ cron.schedule('59 23 * * *', async () => {
       record.checkOut = "23:59:00";
       record.checkoutType = "auto";
       record.isCheckedOut = true;
-      const checkInTime = record.checkIn;
-      const inDate = new Date(`1970-01-01T${checkInTime}Z`);
+      const inDate = new Date(`1970-01-01T${record.checkIn}Z`);
       const outDate = new Date(`1970-01-01T23:59:00Z`);
-      const diffHours = (outDate - inDate) / (1000 * 60 * 60);
+      const diffHrs = (outDate - inDate) / (1000 * 60 * 60);
       
-      record.status = 'Auto Closed'; // Keep it Auto Closed but effectively treated by payroll depending on diffHours
+      record.status = diffHrs >= 4 ? 'Present (Auto Closed)' : 'Half Day Present (Auto Closed)';
       
       if (record.routeTracking && !record.routeTracking.endedAt) {
           const lastLoc = record.routeTracking.locations.length > 0 ? record.routeTracking.locations[record.routeTracking.locations.length - 1] : null;
@@ -199,7 +226,9 @@ cron.schedule('59 23 * * *', async () => {
                city: lastLoc.city || '',
                timestamp: new Date(`${today}T23:59:00+05:30`)
             };
+            record.routeTracking.locations.push(record.routeTracking.endLocation);
           }
+          record.markModified('routeTracking');
       }
       if (req.app.locals.io) {
         req.app.locals.io.emit('employee-check-out', { employeeId: record.employeeId.toString() });
@@ -227,6 +256,90 @@ cron.schedule('59 23 * * *', async () => {
   } catch(e) {
      console.error("Error running auto-checkout cron job:", e);
   }
+}, {
+  scheduled: true,
+  timezone: "Asia/Kolkata"
+});
+
+const archiveAndPurgeMonth = async (targetMonthStr) => {
+  try {
+    const allEmployees = await Employee.find();
+    
+    for (const emp of allEmployees) {
+      const monthRecords = await Attendance.find({ 
+        employeeId: emp._id, 
+        date: { $regex: `^${targetMonthStr}` } 
+      });
+      
+      if (monthRecords.length === 0) continue;
+      
+      let totalWorkingDays = 0;
+      let totalWorkingHours = 0;
+      
+      for (const r of monthRecords) {
+        let weight = 0;
+        if (r.checkIn && r.checkIn !== '-') {
+          if (r.checkOut && r.checkOut !== '-') {
+            const inTime = new Date(`1970-01-01T${r.checkIn}Z`);
+            const outTime = new Date(`1970-01-01T${r.checkOut}Z`);
+            const diff = (outTime - inTime) / (1000 * 60 * 60);
+            weight = diff >= 4 ? 1 : 0.5;
+          } else {
+            // No checkout yet or special status
+            weight = r.status?.includes('Half Day') ? 0.5 : 1;
+          }
+        }
+        totalWorkingDays += weight;
+        
+        if (r.checkIn && r.checkOut && r.checkOut !== '-' && r.checkIn !== '-') {
+           const inTime = new Date(`${r.date}T${r.checkIn}Z`);
+           const outTime = new Date(`${r.date}T${r.checkOut}Z`);
+           const diffHours = (outTime - inTime) / (1000 * 60 * 60);
+           if (diffHours > 0) totalWorkingHours += diffHours;
+        }
+      }
+      
+      let finalSalary = 0;
+      const existingSalary = await SalaryHistory.findOne({ employeeId: emp._id, month: targetMonthStr });
+      if (existingSalary) {
+         finalSalary = existingSalary.netSalary;
+      } else {
+         const [y, m] = targetMonthStr.split('-');
+         const daysInMonth = new Date(parseInt(y), parseInt(m), 0).getDate();
+         let sundays = 0;
+         for (let day = 1; day <= daysInMonth; day++) {
+            if (new Date(parseInt(y), parseInt(m) - 1, day).getDay() === 0) sundays++;
+         }
+         const paidDays = Math.min(daysInMonth, totalWorkingDays + sundays);
+         const dailyWage = emp.monthlySalary / daysInMonth;
+         finalSalary = Math.round(paidDays * dailyWage);
+      }
+      
+      await SalaryArchive.create({
+         employeeName: emp.name,
+         month: targetMonthStr,
+         totalWorkingDays,
+         totalWorkingHours: Math.round(totalWorkingHours * 100) / 100,
+         finalSalary
+      });
+    }
+    
+    await Attendance.deleteMany({ date: { $regex: `^${targetMonthStr}` } });
+    console.log(`Archived and purged attendance data for ${targetMonthStr}`);
+    return { success: true, message: `Archived and purged data for ${targetMonthStr}` };
+  } catch (err) {
+    console.error("Archive Error:", err);
+    throw err;
+  }
+};
+
+// 12-Month Rolling Retention Cron Job - runs on the 1st of every month at midnight
+cron.schedule('0 0 1 * *', async () => {
+    console.log("Running monthly data retention job...");
+    const now = new Date();
+    now.setMonth(now.getMonth() - 12);
+    const targetMonthStr = format(now, 'yyyy-MM');
+    await archiveAndPurgeMonth(targetMonthStr);
 }, {
   scheduled: true,
   timezone: "Asia/Kolkata"
@@ -303,7 +416,7 @@ app.get('/api/employees', async (req, res) => {
     if (employeeCache.data && (now - employeeCache.lastFetched < CACHE_TTL)) {
       return res.json(employeeCache.data);
     }
-    const users = (await Employee.find().lean()).map(u => ({ ...u, id: u._id.toString() }));
+    const users = (await Employee.find({ $or: [{ status: 'active' }, { status: { $exists: false } }] }).lean()).map(u => ({ ...u, id: u._id.toString() }));
     employeeCache.data = users;
     employeeCache.lastFetched = now;
     res.json(users);
@@ -390,14 +503,46 @@ app.put('/api/employees/:id', async (req, res) => {
 
 app.delete('/api/employees/:id', async (req, res) => {
   try {
-    await Employee.findByIdAndDelete(req.params.id);
-    await Attendance.deleteMany({ employeeId: req.params.id });
-    await SalaryHistory.deleteMany({ employeeId: req.params.id });
+    const emp = await Employee.findByIdAndUpdate(req.params.id, { status: 'inactive' }, { new: true });
+    if (!emp) return res.status(404).json({ message: 'Employee not found' });
+    
+    // We intentionally DO NOT delete Attendance and SalaryHistory
+    // to preserve historical data as per requirements.
     
     invalidateEmployeeCache();
     
-    res.json({ message: 'Employee deleted successfully' });
+    res.json({ message: 'Employee deleted successfully (soft delete)' });
   } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// === Available Months API ===
+app.get('/api/attendance/available-months', async (req, res) => {
+  try {
+    const { employeeId } = req.query;
+    let query = {};
+    if (employeeId) query.employeeId = employeeId;
+    
+    // Get unique monthYears
+    const monthYears = await Attendance.distinct('monthYear', query);
+    
+    // Filter out null/undefined and sort descending
+    const validMonths = monthYears.filter(m => m);
+    validMonths.sort((a, b) => {
+      return new Date(b) - new Date(a);
+    });
+    
+    // Format to frontend-friendly structure
+    const formattedMonths = validMonths.map(ym => {
+       const d = new Date(ym);
+       const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+       return { display: ym, value: value };
+    });
+    
+    res.json(formattedMonths);
+  } catch (err) {
+    console.error("Available Months Fetch Error:", err);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -405,14 +550,34 @@ app.delete('/api/employees/:id', async (req, res) => {
 // === Attendance API ===
 app.get('/api/attendance', async (req, res) => {
   try {
-    const { date, employeeId, page, limit } = req.query;
+    const { date, monthYear, employeeId, page, limit } = req.query;
     let query = {};
-    if (date) query.date = date;
+    
+    if (monthYear) {
+      query.monthYear = monthYear;
+    } else if (date) {
+      if (date.length === 7) { // Fallback for old YYYY-MM
+        const [year, month] = date.split('-').map(Number);
+        const nextMonth = month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
+        query.date = { $gte: date, $lt: nextMonth };
+      } else {
+        query.date = date;
+      }
+    }
+    
     if (employeeId) query.employeeId = employeeId;
     
-    if (!date && !employeeId) {
+    const twelveMonthsAgo = new Date();
+    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+    const minDateStr = format(twelveMonthsAgo, 'yyyy-MM-dd');
+
+    if (!date && !monthYear && !employeeId) {
       const thirtyDaysAgoStr = new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0];
       query.date = { $gte: thirtyDaysAgoStr };
+    } else if (query.monthYear || query.date) {
+      // Allow specific queries to run without 12-month limit
+    } else {
+      query.date = { $gte: minDateStr };
     }
     
     let qBuilder = Attendance.find(query).populate('employeeId').select('-locationHistory -routeTracking').sort({ date: -1, checkIn: -1 });
@@ -431,7 +596,7 @@ app.get('/api/attendance', async (req, res) => {
       employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
       role: r.employeeId ? r.employeeId.role : 'Unknown',
       employeeId: r.employeeId ? r.employeeId._id.toString() : null
-    }));
+    })).filter(r => r.employeeName !== 'Unknown' && r.employeeId !== null);
     
     res.json(enrichedRecords);
   } catch (err) {
@@ -453,18 +618,34 @@ app.get('/api/attendance/:id', async (req, res) => {
 app.post('/api/attendance/check-in', async (req, res) => {
   try {
     const { employeeId, latitude, longitude, locationName } = req.body;
+
+    if (!employeeId) {
+      return res.status(400).json({ message: 'Valid Employee ID is required.' });
+    }
+
+    const emp = await Employee.findById(employeeId).lean();
+    if (!emp || !emp.name || !emp.role) {
+      return res.status(400).json({ message: 'Invalid user session. Missing name or role.' });
+    }
+
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
     const nowTime = format(nowIST, 'HH:mm:ss');
     
-    const existingRecord = await Attendance.findOne({ employeeId, date: today });
+    const existingRecord = await Attendance.findOne({ 
+      $or: [
+        { employeeId: employeeId, date: today },
+        { employeeId: new mongoose.Types.ObjectId(employeeId), date: today }
+      ]
+    });
     if (existingRecord) {
       return res.status(400).json({ message: 'Already checked in today' });
     }
 
     const newRecord = await Attendance.create({
-      employeeId,
+      employeeId: new mongoose.Types.ObjectId(employeeId),
       date: today,
+      monthYear: format(nowIST, 'MMMM yyyy'),
       checkIn: nowTime,
       checkOut: null,
       status: 'Present',
@@ -474,11 +655,10 @@ app.post('/api/attendance/check-in', async (req, res) => {
     });
     
     if (req.app.locals.io) {
-      const emp = await Employee.findById(employeeId).lean();
       req.app.locals.io.emit('employee-check-in', {
         employeeId,
         id: employeeId,
-        employeeName: emp ? emp.name : 'Unknown',
+        employeeName: emp.name,
         checkIn: nowTime,
         latitude,
         longitude,
@@ -496,7 +676,7 @@ app.post('/api/attendance/check-in', async (req, res) => {
 
 app.post('/api/attendance/work-details', async (req, res) => {
   try {
-    const { employeeId, workDetails, distanceTraveled, foodExpense } = req.body;
+    const { employeeId, distanceTraveled, foodExpense, workDetails } = req.body;
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
     
@@ -504,23 +684,40 @@ app.post('/api/attendance/work-details', async (req, res) => {
     const food = Number(foodExpense) || 0;
     const travelExp = dist * 2.5;
     
-    const record = await Attendance.findOneAndUpdate(
-      { employeeId, date: today }, 
-      { 
-        workDetails,
-        distanceTraveled: dist,
-        travelExpense: travelExp,
-        foodExpense: food
-      },
-      { new: true }
-    );
+    const updateData = {
+      distanceTraveled: dist,
+      travelExpense: travelExp,
+      foodExpense: food,
+      workDetails: Array.isArray(workDetails) ? workDetails : []
+    };
     
-    if (record) {
-      res.json(record);
-    } else {
-      res.status(404).json({ message: 'No check-in record found for today' });
+    const record = await Attendance.findOne({ employeeId, date: today });
+    
+    if (!record) {
+      return res.status(404).json({ message: 'No check-in record found for today' });
     }
+
+    // Explicitly update each field to ensure persistence
+    record.distanceTraveled = dist;
+    record.travelExpense = travelExp;
+    record.foodExpense = food;
+    record.workDetails = Array.isArray(workDetails) ? workDetails : [];
+
+    for (let i = 1; i <= 10; i++) {
+       const key = `workPoint${i}`;
+       if (req.body[key] !== undefined) {
+          record[key] = req.body[key];
+       }
+    }
+
+    await record.save();
+    
+    // Return the full updated record
+    const plainRecord = record.toObject();
+    plainRecord.id = plainRecord._id.toString();
+    res.json(plainRecord);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -599,8 +796,15 @@ app.post('/api/attendance/check-out', async (req, res) => {
       record.foodExpense = Number(foodExpense) || 0;
     }
     
-    if (workDetails !== undefined) {
-      record.workDetails = workDetails;
+    if (req.body.workDetails !== undefined) {
+      record.workDetails = req.body.workDetails;
+    }
+
+    // Handle 10 work points
+    for (let i = 1; i <= 10; i++) {
+      if (req.body[`workPoint${i}`] !== undefined) {
+        record[`workPoint${i}`] = req.body[`workPoint${i}`];
+      }
     }
     
     if (req.app.locals.io) {
@@ -624,7 +828,7 @@ app.get('/api/reports', async (req, res) => {
       employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
       role: r.employeeId ? r.employeeId.role : 'Unknown',
       employeeId: r.employeeId ? r.employeeId._id.toString() : null
-    }));
+    })).filter(r => r.employeeName !== 'Unknown' && r.employeeId !== null);
     res.json(enrichedRecords);
   } catch (err) {
     res.status(500).json({ message: 'Server error' });
@@ -632,6 +836,19 @@ app.get('/api/reports', async (req, res) => {
 });
 
 // === Salary API ===
+
+app.get('/api/salary/archive/:employeeName', async (req, res) => {
+   try {
+      console.log('HIT ARCHIVE ROUTE for', req.params.employeeName);
+      const archives = await SalaryArchive.find({ employeeName: req.params.employeeName }).sort({ month: -1 });
+      console.log('Found archives:', archives.length);
+      res.json(archives);
+   } catch(e) {
+      console.log('Archive Error:', e.message);
+      res.status(500).json({ error: e.message });
+   }
+});
+
 app.get('/api/salary/:employeeId', async (req, res) => {
   try {
     const { employeeId } = req.params;
@@ -653,20 +870,56 @@ app.get('/api/salary/:employeeId', async (req, res) => {
     
     const expectedWorkingDays = daysInMonth - sundays;
     
-    // Find attendance records for the month using indexed range queries instead of RegExp
-    const nextMonth = month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
+    // Find attendance records for the month with robust date range
+    const startOfMonthStr = `${targetYearMonth}-01`;
+    const endOfMonthStr = `${targetYearMonth}-31`; // String comparison works for yyyy-MM-dd
+    
+    // Convert employeeId safely to handle both string and ObjectId inputs
+    let targetObjectId;
+    try {
+      targetObjectId = new mongoose.Types.ObjectId(employeeId);
+    } catch (e) {
+      targetObjectId = employeeId;
+    }
+
     const monthRecords = await Attendance.find({ 
-      employeeId, 
-      date: { $gte: targetYearMonth, $lt: nextMonth }
+      $or: [
+        { employeeId: employeeId, date: { $gte: startOfMonthStr, $lte: endOfMonthStr } },
+        { employeeId: targetObjectId, date: { $gte: startOfMonthStr, $lte: endOfMonthStr } }
+      ]
     }).select('-locationHistory -routeTracking').lean();
     
-    let totalDaysWorked = 0;
+    console.log(`[SALARY CALC] Found ${monthRecords.length} total records for employee ${employeeId} in range ${startOfMonthStr} to ${endOfMonthStr}`);
+    
+    // Group by unique date to ensure accurate daily counting
+    const dailyStatusMap = {}; 
+    monthRecords.forEach(r => {
+      const date = r.date;
+      if (!date) return;
+      
+      let weight = 0;
+      if (r.checkIn && r.checkIn !== '-') {
+        if (r.checkOut && r.checkOut !== '-') {
+          const inTime = new Date(`1970-01-01T${r.checkIn}Z`);
+          const outTime = new Date(`1970-01-01T${r.checkOut}Z`);
+          const diff = (outTime - inTime) / (1000 * 60 * 60);
+          weight = diff >= 4 ? 1 : 0.5;
+        } else {
+          weight = r.status?.includes('Half Day') ? 0.5 : 1;
+        }
+      }
+      
+      if (!dailyStatusMap[date] || weight > dailyStatusMap[date]) {
+        dailyStatusMap[date] = weight;
+      }
+    });
+
+    let totalDaysWorked = Object.values(dailyStatusMap).reduce((sum, w) => sum + w, 0);
+    console.log(`[SALARY CALC] Unique Days: ${Object.keys(dailyStatusMap).join(', ')}, Total Weight: ${totalDaysWorked}`);
+    
     let totalTravelExpense = 0;
     let totalFoodExpense = 0;
     monthRecords.forEach(r => {
-      if (r.status === 'Full Day Present' || r.status === 'Present') totalDaysWorked += 1;
-      else if (r.status === 'Half Day Present') totalDaysWorked += 0.5;
-      
       totalTravelExpense += (r.travelExpense || 0);
       totalFoodExpense += (r.foodExpense || 0);
     });
@@ -698,6 +951,16 @@ app.get('/api/salary/:employeeId', async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
+app.post('/api/trigger-archive/:month', async (req, res) => {
+   try {
+     const result = await archiveAndPurgeMonth(req.params.month);
+     res.json(result);
+   } catch(e) {
+     res.status(500).json({ error: e.message });
+   }
+});
+
 
 app.post('/api/salary/save', async (req, res) => {
   try {
@@ -887,9 +1150,9 @@ app.post('/api/route/snap', async (req, res) => {
     
     const gRes = await axios.get(url);
     
-    if (!gRes.data.snappedPoints) {
-       console.error("Google Roads API Error:", gRes.data);
-       return res.status(400).json({ message: `Google Roads API Error` });
+    if (!gRes.data || !gRes.data.snappedPoints) {
+       console.warn("Google Roads API Error or empty response:", gRes.data);
+       return res.json({ snappedPoints: sampled, distance: 0 }); // Graceful fallback
     }
     
     const snappedCoords = gRes.data.snappedPoints.map(p => ({
@@ -980,8 +1243,8 @@ app.post('/api/location/update', async (req, res) => {
       
       const timeDiffHours = (currentLoc.timestamp - lastLoc.timestamp) / (1000 * 60 * 60);
       
-      // Spike detection: ignore unrealistic speeds > 150km/h
-      if (timeDiffHours > 0 && distKm > 0.1 && (distKm / timeDiffHours) > 150) {
+      // Spike detection: ignore unrealistic speeds > 300km/h
+      if (timeDiffHours > 0 && distKm > 0.1 && (distKm / timeDiffHours) > 300) {
          console.warn(`[GPS] Spike ignored for ${employeeId}: ${distKm.toFixed(2)}km in ${timeDiffHours.toFixed(4)}hrs`);
          return res.json({ success: true, message: 'Spike ignored' });
       }
@@ -1024,6 +1287,8 @@ app.post('/api/location/update', async (req, res) => {
         }
         
         // DO NOT push to routeTracking.locations or add to totalDistanceKm if < 20m
+        record.markModified('routeTracking');
+        record.markModified('locationHistory');
         await record.save();
         
         // Still emit for live marker update on map, but without path growth
@@ -1056,6 +1321,8 @@ app.post('/api/location/update', async (req, res) => {
     currentLoc.isRepeat = isRepeat;
 
     record.routeTracking.locations.push(currentLoc);
+    record.markModified('routeTracking');
+    record.markModified('locationHistory');
     await record.save();
 
     if (req.app.locals.io) {
@@ -1097,6 +1364,7 @@ app.post('/api/location/stop', async (req, res) => {
        };
        record.routeTracking.endedAt = new Date();
        record.routeTracking.locations.push(record.routeTracking.endLocation);
+       record.markModified('routeTracking');
        
        // Add final distance
        const locations = record.routeTracking.locations;
@@ -1250,7 +1518,7 @@ app.post('/api/location/sync', async (req, res) => {
         const distKm = getDistanceKm(lastLoc.latitude, lastLoc.longitude, currentLoc.latitude, currentLoc.longitude);
         const timeDiffHours = (currentLoc.timestamp - lastLoc.timestamp) / (1000 * 60 * 60);
         
-        if (timeDiffHours > 0 && distKm > 0.05 && (distKm / timeDiffHours) > 150) {
+        if (timeDiffHours > 0 && distKm > 0.05 && (distKm / timeDiffHours) > 300) {
            continue; // Spike
         }
 
@@ -1305,6 +1573,8 @@ app.post('/api/location/sync', async (req, res) => {
       }
       record.routeTracking.locations.push(currentLoc);
     }
+    record.markModified('routeTracking');
+    record.markModified('locationHistory');
     await record.save();
     res.json({ success: true, syncedCount: sorted.length });
   } catch (err) {

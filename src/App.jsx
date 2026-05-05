@@ -12,11 +12,26 @@ const Employees = lazy(() => import('./pages/Employees'));
 const Attendance = lazy(() => import('./pages/Attendance'));
 
 function App() {
-  const user = JSON.parse(localStorage.getItem('user'));
+  let user = null;
+  try {
+    const stored = localStorage.getItem('user');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed && parsed.id && parsed.name && parsed.role) {
+        user = parsed;
+      } else {
+        localStorage.removeItem('user');
+      }
+    }
+  } catch(e) {
+    localStorage.removeItem('user');
+  }
+
   const [appLoading, setAppLoading] = useState(true);
   const [dashboardStats, setDashboardStats] = useState(null);
   const [attendanceRecords, setAttendanceRecords] = useState(null);
   const [employeeList, setEmployeeList] = useState(null);
+  const [todayRecords, setTodayRecords] = useState(null);
   const [timerDone, setTimerDone] = useState(false);
 
   const fetchGlobalData = async () => {
@@ -25,6 +40,7 @@ function App() {
         setDashboardStats({});
         setAttendanceRecords([]);
         setEmployeeList([]);
+        setTodayRecords([]);
         return;
       }
       const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
@@ -55,12 +71,14 @@ function App() {
       }));
 
       setEmployeeList(empRes.data);
+      setTodayRecords(attStatsRes.data);
 
     } catch (error) {
       console.error('Global data fetch failure:', error);
       setDashboardStats({});
       setAttendanceRecords([]);
       setEmployeeList([]);
+      setTodayRecords([]);
     }
   };
 
@@ -92,11 +110,11 @@ function App() {
 
   useEffect(() => {
     // Both branding time and ALL data must be ready
-    if (timerDone && dashboardStats !== null && attendanceRecords !== null && employeeList !== null) {
+    if (timerDone && dashboardStats !== null && attendanceRecords !== null && employeeList !== null && todayRecords !== null) {
       console.log('All data ready, transitioning to dashboard...');
       setAppLoading(false);
     }
-  }, [timerDone, dashboardStats, attendanceRecords, employeeList]);
+  }, [timerDone, dashboardStats, attendanceRecords, employeeList, todayRecords]);
 
   if (appLoading) return <LoadingScreen />;
 
@@ -107,7 +125,7 @@ function App() {
           <Suspense fallback={<LoadingScreen />}>
             <Routes>
               <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
-              <Route path="/" element={user ? <Dashboard stats={dashboardStats} refreshStats={fetchGlobalData} /> : <Navigate to="/login" />} />
+              <Route path="/" element={user ? <Dashboard stats={dashboardStats} refreshStats={fetchGlobalData} employeeList={employeeList} todayRecords={todayRecords} /> : <Navigate to="/login" />} />
               <Route path="/employees" element={user ? <Employees employees={employeeList} refreshEmployees={fetchGlobalData} /> : <Navigate to="/login" />} />
               <Route path="/attendance" element={user ? <Attendance records={attendanceRecords} refreshRecords={fetchGlobalData} /> : <Navigate to="/login" />} />
             </Routes>

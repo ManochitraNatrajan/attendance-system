@@ -26,7 +26,19 @@ export default function Login() {
     try {
       const dbResponse = await axios.post('/api/login', { contact, password });
       if (dbResponse.data.success) {
-        localStorage.setItem('user', JSON.stringify(dbResponse.data.user));
+        const u = dbResponse.data.user;
+        if (!u.name || !u.role || !u.id) {
+          setError('Invalid account details. Missing name or role.');
+          setLoading(false);
+          return;
+        }
+        const sessionData = {
+          id: u.id,
+          name: u.name,
+          role: u.role,
+          loginTimestamp: Date.now()
+        };
+        localStorage.setItem('user', JSON.stringify(sessionData));
         window.location.replace('/');
       }
     } catch (err) {

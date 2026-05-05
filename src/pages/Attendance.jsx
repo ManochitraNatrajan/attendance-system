@@ -1,13 +1,48 @@
-import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import axios from 'axios';
 import Skeleton from '../components/Skeleton';
 import { format } from 'date-fns';
-import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X, Activity } from 'lucide-react';
+import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X, Activity, ChevronDown, AlertTriangle } from 'lucide-react';
 import RouteTrackingModal from '../components/RouteTrackingModal';
 import { LocationTracker } from '../services/LocationTracker';
 import { getSyncedTime } from '../utils/timeSync';
 
 let activeLocationTracker = null;
+
+const formatTimeStr = (timeStr) => {
+  if (!timeStr || timeStr === '--:--' || timeStr === '-') return timeStr;
+  try {
+    // If it's an ISO string (contains T or -)
+    if (timeStr.includes('T') || timeStr.includes('-')) {
+      return format(new Date(timeStr), 'hh:mm a');
+    }
+    // If it's already in HH:mm format
+    const parts = timeStr.split(':');
+    if (parts.length >= 2) {
+      let h = parseInt(parts[0], 10);
+      const m = parts[1].split(' ')[0]; // ignore existing AM/PM if any
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return `${h}:${m} ${ampm}`;
+    }
+    return timeStr;
+  } catch (e) {
+    return timeStr;
+  }
+};
+
+const hasWorkDetails = (record) => {
+  if (!record) return false;
+  // Check individual points first (new storage)
+  for (let i = 1; i <= 10; i++) {
+    if (record[`workPoint${i}`]?.trim()) return true;
+  }
+  // Check workDetails array (legacy storage)
+  if (record.workDetails && Array.isArray(record.workDetails)) {
+    return record.workDetails.some(w => w && typeof w === 'string' && w.trim());
+  }
+  return false;
+};
 
 const Attendance = memo(function Attendance({ records: globalRecords, refreshRecords }) {
   const [records, setRecords] = useState(globalRecords || []);
@@ -15,10 +50,11 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   const [actionLoading, setActionLoading] = useState(false);
   const [sessionSummary, setSessionSummary] = useState(null);
   const [workDetails, setWorkDetails] = useState(Array(10).fill(''));
-  const [distanceTraveled, setDistanceTraveled] = useState('');
-  const [foodExpense, setFoodExpense] = useState('');
-  const [savingDetails, setSavingDetails] = useState(false);
   const [viewingDetailsFor, setViewingDetailsFor] = useState(null);
+  const [travelExpenseAmount, setTravelExpenseAmount] = useState('');
+  const [travelDistance, setTravelDistance] = useState('');
+  const [foodExpenseAmount, setFoodExpenseAmount] = useState('');
+  const [savingDetails, setSavingDetails] = useState(false);
   const [viewingMapFor, setViewingMapFor] = useState(null);
   const [mapLoading, setMapLoading] = useState(false);
   const mapRef = useRef(null);
@@ -29,42 +65,103 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  
-  const user = JSON.parse(localStorage.getItem('user'));
+  const user = JSON.parse(localStorage.getItem('user')) || {};
   const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
   const todayStr = format(nowIST, 'yyyy-MM-dd');
+  const currentMonthStr = format(nowIST, 'yyyy-MM');
 
-  const formatTimeStr = (timeStr) => {
-    if (!timeStr || timeStr === '--:--' || timeStr === '-') return timeStr;
-    const parts = timeStr.split(':');
-    if (parts.length < 2) return timeStr;
-    let h = parseInt(parts[0], 10);
-    const m = parts[1];
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    h = h % 12 || 12;
-    return `${h}:${m} ${ampm}`;
-  };
+  const [availableMonths, setAvailableMonths] = useState([{ value: currentMonthStr, display: format(nowIST, 'MMMM yyyy') }]);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthStr);
+  const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
+  const [employeeList, setEmployeeList] = useState([]);
+  const [selectedEmployee, setSelectedEmployee] = useState('All');
+  const [isEmployeeDropdownOpen, setIsEmployeeDropdownOpen] = useState(false);
+  const [employeeSearchTerm, setEmployeeSearchTerm] = useState('');
+
+  useEffect(() => {
+    const fetchAvailableMonths = async () => {
+      try {
+        const userObj = JSON.parse(localStorage.getItem('user'));
+        if (!userObj || !userObj.id) return;
+        const endpoint = userObj.role === 'Admin' 
+          ? '/api/attendance/available-months' 
+          : `/api/attendance/available-months?employeeId=${userObj.id}`;
+        const res = await axios.get(endpoint);
+        setAvailableMonths(res.data);
+        if (res.data.length > 0 && !selectedMonth) {
+          setSelectedMonth(res.data[0].value);
+        }
+        if (userObj.role === 'Admin') {
+           const empRes = await axios.get('/api/employees');
+           setEmployeeList(empRes.data);
+        }
+      } catch (err) {
+        console.error("Failed to fetch available months or employees", err);
+      }
+    };
+    fetchAvailableMonths();
+  }, [user.role, user.id]);
+  const [locationError, setLocationError] = useState(true);
+
+  useEffect(() => {
+     const handleGpsStatus = (e) => {
+         setLocationError(e.detail.error);
+     };
+     window.addEventListener('gps-status', handleGpsStatus);
+     
+     if (navigator.geolocation) {
+         navigator.geolocation.getCurrentPosition(
+             () => setLocationError(false),
+             () => setLocationError(true),
+             { enableHighAccuracy: true, timeout: 4000, maximumAge: 0 }
+         );
+     }
+     
+     return () => window.removeEventListener('gps-status', handleGpsStatus);
+  }, []);
+
+  // availableMonths handled by the fetchAvailableMonths useEffect above
+
+  const filteredRecords = useMemo(() => {
+    const safeRecords = Array.isArray(records) ? records : [];
+    let filtered = safeRecords;
+    if (selectedMonth) {
+      filtered = filtered.filter(r => r && r.date && r.date.startsWith(selectedMonth));
+    }
+    if (selectedEmployee && selectedEmployee !== 'All') {
+      filtered = filtered.filter(r => r && (r.employeeId === selectedEmployee || r.employeeId?.toString() === selectedEmployee.toString()));
+    }
+    return filtered;
+  }, [records, selectedMonth, selectedEmployee]);
+
+  // user and dates moved up for default state
+
 
 
   useEffect(() => {
-    if (globalRecords) {
-      setRecords(globalRecords);
-      setPage(1);
-      setHasMore(globalRecords.length >= 20);
-      const userTodayRecord = globalRecords.find(r => r.employeeId === user.id && r.date === todayStr);
+    if (globalRecords && Array.isArray(globalRecords)) {
+      // Only overwrite records from globalRecords if we are viewing the current month
+      const isCurrentMonth = !selectedMonth || (availableMonths?.length > 0 && selectedMonth === availableMonths[0].value);
+      
+      if (isCurrentMonth) {
+          setRecords(globalRecords);
+          setPage(1);
+          setHasMore(globalRecords.length >= 20);
+      }
+      
+      const userTodayRecord = globalRecords.find(r => r && r.employeeId === user.id && r.date === todayStr);
       setTodayRecord(userTodayRecord || null);
       
       if (userTodayRecord) {
-        setDistanceTraveled(userTodayRecord.distanceTraveled !== undefined ? userTodayRecord.distanceTraveled.toString() : '');
-        setFoodExpense(userTodayRecord.foodExpense !== undefined ? userTodayRecord.foodExpense.toString() : '');
+        setTravelDistance(userTodayRecord.distanceTraveled !== undefined ? userTodayRecord.distanceTraveled.toString() : '');
+        setFoodExpenseAmount(userTodayRecord.foodExpense !== undefined ? userTodayRecord.foodExpense.toString() : '');
         
-        if (userTodayRecord.workDetails && userTodayRecord.workDetails.length > 0) {
-            const loaded = [...userTodayRecord.workDetails];
-            while (loaded.length < 10) loaded.push('');
-            setWorkDetails(loaded.slice(0, 10));
-        } else {
-            setWorkDetails(Array(10).fill(''));
+        // Set work details state from individual points
+        const points = [];
+        for (let i = 1; i <= 10; i++) {
+          points.push(userTodayRecord[`workPoint${i}`] || '');
         }
+        setWorkDetails(points);
         
         // Start tracking if checked in but not checked out (resume session)
         if (!userTodayRecord.checkOut && !userTodayRecord.isCheckedOut && !activeLocationTracker) {
@@ -80,16 +177,37 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         
       } else {
         setWorkDetails(Array(10).fill(''));
-        setDistanceTraveled('');
-        setFoodExpense('');
+        setTravelDistance('');
+        setTravelExpenseAmount('');
+        setFoodExpenseAmount('');
       }
     }
-  }, [globalRecords, user.id, todayStr]);
+  }, [globalRecords, user.id, todayStr, selectedMonth, availableMonths]);
 
   useEffect(() => {
     // Silently refresh global records in background on mount
     if (refreshRecords) refreshRecords();
   }, []);
+
+  useEffect(() => {
+    if (!selectedMonth) return;
+    const fetchMonthData = async () => {
+       setRecords([]);
+       const endpoint = user.role === 'Admin' 
+         ? `/api/attendance?date=${selectedMonth}`
+         : `/api/attendance?employeeId=${user.id}&date=${selectedMonth}`;
+         
+       try {
+         const res = await axios.get(endpoint);
+         setRecords(Array.isArray(res.data) ? res.data : []);
+         setPage(1);
+         setHasMore(false); // Monthly view shows all for that month, pagination disabled
+       } catch (err) {
+         console.error("Failed to fetch month data", err);
+       }
+    };
+    fetchMonthData();
+  }, [selectedMonth, user.role, user.id]);
 
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingMore) return;
@@ -246,10 +364,11 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
       checkInTime: todayRecord?.checkIn || "-",
       checkOutTime: format(checkOutTimeDate, 'hh:mm a'),
       workingHours: diffHrs.toFixed(2),
-      distance: distanceTraveled || 0,
-      travelExpense: (Number(distanceTraveled) * 2.5).toFixed(2),
-      foodExpense: foodExpense || 0,
-      status
+      distance: (Number(travelExpenseAmount) || 0) / 2.5,
+      travelExpense: Number(travelExpenseAmount) || 0,
+      foodExpense: foodExpenseAmount || 0,
+      status,
+      workDetails: [...workDetails]
     });
 
     try {
@@ -263,9 +382,9 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         longitude: finalLng,
         status: status,
         locationName,
-        distanceTraveled: Number(distanceTraveled) || 0,
-        foodExpense: Number(foodExpense) || 0,
-        workDetails
+        distanceTraveled: (Number(travelExpenseAmount) || 0) / 2.5,
+        foodExpense: Number(foodExpenseAmount) || 0,
+        workDetails: workDetails
       });
 
       // Stop route tracking
@@ -295,27 +414,54 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   };
 
   const handleSaveWorkDetails = async () => {
-    const filledCount = workDetails.filter(w => w.trim()).length;
-    if (filledCount < 10) {
-      const proceed = window.confirm(`Important: You have only filled ${filledCount} out of 10 required work points. Do you want to save anyway?`);
-      if (!proceed) return;
-    }
-
-    setSavingDetails(true);
     try {
-      await axios.post('/api/attendance/work-details', {
+      setSavingDetails(true);
+      const distance = Number(travelDistance) || 0;
+      const foodAmount = Number(foodExpenseAmount) || 0;
+
+      // Explicitly construct the 10-point payload to ensure consistency
+      const pointsPayload = {};
+      for (let i = 0; i < 10; i++) {
+        pointsPayload[`workPoint${i + 1}`] = workDetails[i] || '';
+      }
+
+      const response = await axios.post('/api/attendance/work-details', {
         employeeId: user.id,
-        workDetails,
-        distanceTraveled: Number(distanceTraveled),
-        foodExpense: Number(foodExpense)
+        distanceTraveled: distance,
+        foodExpense: foodAmount,
+        workDetails: workDetails, // Keep array for backward compatibility
+        ...pointsPayload
       });
-      alert('Success! Your 10-point work details have been saved and sent to the admin.');
+      
+      const updatedRecord = response.data;
+      
+      // Update local records state immediately with robust matching
+      setRecords(prev => prev.map(r => {
+        const isMatch = (r.id && updatedRecord.id && r.id === updatedRecord.id) || 
+                        (r._id && updatedRecord._id && r._id === updatedRecord._id) ||
+                        (r.date === updatedRecord.date && (r.employeeId?.toString() === updatedRecord.employeeId?.toString()));
+        
+        if (isMatch) {
+          return { ...r, ...updatedRecord, employeeName: r.employeeName }; // preserve name
+        }
+        return r;
+      }));
+      
+      // Update today record
+      setTodayRecord(prev => prev ? ({ ...prev, ...updatedRecord }) : updatedRecord);
+      
+      // Sync work details state from individual points
+      const points = [];
+      for (let i = 1; i <= 10; i++) {
+        points.push(updatedRecord[`workPoint${i}`] || '');
+      }
+      setWorkDetails(points);
+
+      alert('Work Details Saved Successfully!');
       if (refreshRecords) refreshRecords();
-      // Optional: scroll back to top after saving
-      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       console.error(err);
-      alert('Failed to save work details.');
+      alert('Failed to save work details. Please try again.');
     } finally {
       setSavingDetails(false);
     }
@@ -375,11 +521,18 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full animate-in fade-in slide-in-from-bottom-4 duration-300 ease-in-out">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 text-left m-0">Attendance</h1>
         <p className="text-gray-500 mt-1 text-left">Track daily check-ins and check-outs</p>
       </div>
+
+      {locationError && todayRecord && !todayRecord.isCheckedOut && !todayRecord.checkOut && (
+         <div className="bg-red-50 border border-red-200 p-4 rounded-xl mb-8 flex items-center gap-3 animate-in fade-in zoom-in duration-300">
+           <AlertTriangle className="w-6 h-6 text-red-500 shrink-0" />
+           <p className="text-red-700 font-bold text-lg m-0">Location is not recognizable</p>
+         </div>
+      )}
 
       <div className="bg-white rounded-xl shadow-sm border border-[var(--accent-border)] p-6 mb-8 text-center sm:text-left flex flex-col sm:flex-row justify-between items-center gap-6">
         <div>
@@ -414,11 +567,20 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
           {/* Tracking indicator display */}
           {todayRecord && !todayRecord.isCheckedOut && !todayRecord.checkOut && (
              <div className="mt-3 flex items-center gap-2 justify-center sm:justify-start pt-3 border-t border-gray-100">
-               <span className="relative flex h-3 w-3">
-                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                 <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-               </span>
-               <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Live Location Tracking Active</span>
+               {locationError ? (
+                 <>
+                   <AlertTriangle className="w-4 h-4 text-red-500" />
+                   <span className="text-xs font-bold text-red-600 uppercase tracking-widest">Location is not recognizable</span>
+                 </>
+               ) : (
+                 <>
+                   <span className="relative flex h-3 w-3">
+                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                     <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                   </span>
+                   <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">Live Location Tracking Active</span>
+                 </>
+               )}
              </div>
           )}
         </div>
@@ -451,59 +613,94 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         </div>
       </div>
 
-      {todayRecord && !todayRecord.checkOut && (
-        <div id="work-details-section" className="bg-white rounded-xl shadow-md border-2 border-indigo-200 p-6 mb-8 ring-4 ring-indigo-50 ring-opacity-50">
+      {todayRecord && (
+        <div id="work-details-section" className="bg-white rounded-2xl shadow-sm border border-indigo-100 p-6 mb-8 relative transition-all hover:shadow-md">
           <h2 className="text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
-            <Clock className="text-indigo-600" />
-            Shift Action Required: Today's Work Details
+            <Clock className="text-indigo-600 w-5 h-5" />
+            Work Details & Expenses
           </h2>
-          <p className="text-sm text-gray-600 mb-6 font-medium">Please list exactly 10 points describing your work tasks for today below.</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-            {workDetails.map((detail, idx) => (
-              <div key={idx} className="flex flex-col">
-                 <label className="text-xs font-semibold text-gray-600 mb-1 ml-1">Point {idx + 1}</label>
-                 <input 
-                   type="text" 
-                   value={detail} 
-                   onChange={(e) => {
-                     const newDetails = [...workDetails];
-                     newDetails[idx] = e.target.value;
-                     setWorkDetails(newDetails);
-                   }}
-                   className="block w-full border border-gray-300 rounded-lg shadow-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent transition text-sm"
-                   placeholder={`Enter detail ${idx + 1}...`}
-                 />
+          <p className="text-sm text-gray-500 mb-6 font-medium">Log your daily summary and valid expenses here.</p>
+          
+          <div className="mb-6">
+            <label className="text-sm font-bold text-gray-700 mb-4 block flex items-center gap-2">
+              Daily Work Points (10 Points)
+              <span className="text-[10px] bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full uppercase tracking-tighter font-black">Fill any or all</span>
+            </label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((idx) => (
+                <div key={idx} className="relative group">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-400 font-black text-xs group-focus-within:text-indigo-600 transition-colors">
+                    #{idx + 1}
+                  </span>
+                  <input 
+                    type="text"
+                    value={workDetails[idx] || ''} 
+                    onChange={e => {
+                      const newDetails = [...workDetails];
+                      newDetails[idx] = e.target.value;
+                      setWorkDetails(newDetails);
+                    }}
+                    disabled={todayRecord?.isCheckedOut || todayRecord?.checkOut}
+                    placeholder={`Enter work point ${idx + 1}...`} 
+                    className="w-full border border-gray-200 bg-gray-50/50 rounded-xl shadow-sm py-3 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm font-medium disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed group-hover:border-indigo-200"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-5 bg-gradient-to-br from-gray-50 to-indigo-50/30 rounded-xl border border-gray-100 mb-6">
+            <div>
+              <label className="text-sm font-bold text-gray-700 mb-2 block">Travel Distance (KM)</label>
+              <input 
+                type="number" 
+                min="0" 
+                step="0.1"
+                value={travelDistance} 
+                onChange={e => setTravelDistance(e.target.value)} 
+                disabled={todayRecord.isCheckedOut || todayRecord.checkOut}
+                placeholder="e.g. 20" 
+                className="w-full border border-gray-200 bg-white rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed" 
+              />
+            </div>
+            <div>
+              <label className="text-sm font-bold text-gray-700 mb-2 block">Travel Expense (₹)</label>
+              <div className="w-full border border-gray-200 bg-gray-50 rounded-xl shadow-sm py-3 px-4 text-indigo-700 font-bold">
+                ₹{(Number(travelDistance) * 2.5).toFixed(2)}
               </div>
-            ))}
-          </div>
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
-            <div>
-              <label className="text-sm font-semibold text-gray-700 mb-1 block">Travel Distance (Kilometers)</label>
-              <input type="number" min="0" value={distanceTraveled} onChange={e => setDistanceTraveled(e.target.value)} placeholder="e.g. 15" className="w-full border border-gray-300 rounded-lg shadow-sm py-2 px-3 mb-2 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]" />
-              <p className="text-xs text-gray-500">Travel Expense (Auto-calculated): <span className="font-bold text-green-600">₹{(Number(distanceTraveled) * 2.5).toFixed(2)}</span> at ₹2.5/km</p>
             </div>
             <div>
-              <label className="text-sm font-semibold text-gray-700 mb-1 block">Food Expense (₹)</label>
-              <input type="number" min="0" value={foodExpense} onChange={e => setFoodExpense(e.target.value)} placeholder="e.g. 150" className="w-full border border-gray-300 rounded-lg shadow-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]" />
+              <label className="text-sm font-bold text-gray-700 mb-2 block">Food Expense (₹)</label>
+              <input 
+                type="number" 
+                min="0" 
+                value={foodExpenseAmount} 
+                onChange={e => setFoodExpenseAmount(e.target.value)} 
+                disabled={todayRecord.isCheckedOut || todayRecord.checkOut}
+                placeholder="e.g. 150" 
+                className="w-full border border-gray-200 bg-white rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed" 
+              />
             </div>
           </div>
-          <div className="mt-6 flex justify-end">
-             <button 
-               onClick={handleSaveWorkDetails} 
-               disabled={savingDetails}
-               className="bg-[var(--accent)] text-white px-6 py-2 rounded-lg font-medium hover:bg-purple-700 transition shadow-sm disabled:opacity-70 flex items-center gap-2"
-             >
-               {savingDetails ? (
-                 <span className="flex items-center gap-2">
-                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                   Saving...
-                 </span>
-               ) : (
-                 <>
-                   <CheckCircle className="w-4 h-4" /> Save Details
-                 </>
-               )}
-             </button>
+          
+          <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-4 border-t border-gray-100 pt-6">
+             {(!todayRecord.isCheckedOut && !todayRecord.checkOut) && (
+                 <button 
+                   onClick={handleSaveWorkDetails} 
+                   disabled={savingDetails}
+                   className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-indigo-700 hover:shadow-lg transition-all disabled:opacity-70 flex items-center justify-center gap-2"
+                 >
+                   {savingDetails ? (
+                     <span className="flex items-center gap-2">
+                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                       Saving...
+                     </span>
+                   ) : (
+                     <>
+                       <CheckCircle className="w-4 h-4" /> Save Details
+                     </>
+                   )}
+                 </button>
+             )}
           </div>
         </div>
       )}
@@ -543,28 +740,125 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50">
-          <h3 className="text-lg font-medium text-gray-900 text-left">Attendance History</h3>
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8 transition-all hover:shadow-md">
+        <div className="px-6 py-5 border-b border-blue-100/50 bg-gradient-to-br from-blue-50/80 to-indigo-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative">
+          <h3 className="text-lg font-bold text-indigo-950 text-left">Attendance History</h3>
+          <div className="relative z-50 flex items-center gap-2">
+                {user?.role === 'Admin' && (
+                  <div className="relative">
+                    <button 
+                      onClick={() => {
+                        setIsEmployeeDropdownOpen(!isEmployeeDropdownOpen);
+                        setEmployeeSearchTerm('');
+                      }}
+                      className="flex items-center justify-between w-full sm:w-56 px-4 py-2.5 bg-white border border-indigo-200 rounded-xl shadow-sm text-sm font-bold text-gray-700 hover:bg-gray-50 hover:border-indigo-300 transition-all focus:ring-2 focus:ring-indigo-100 outline-none"
+                    >
+                      <span className="truncate pr-2">{employeeList.find(e => e.id === selectedEmployee)?.name || (selectedEmployee === 'All' ? 'All Employees' : 'Select Employee')}</span>
+                      <ChevronDown className={`w-4 h-4 text-indigo-500 shrink-0 transition-transform duration-200 ${isEmployeeDropdownOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {isEmployeeDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setIsEmployeeDropdownOpen(false)}></div>
+                        <div className="absolute left-0 sm:right-0 mt-2 w-full sm:w-64 bg-white border border-gray-100 rounded-2xl shadow-2xl z-50 py-3 animate-in fade-in slide-in-from-top-2 duration-200 overflow-hidden">
+                          <div className="px-3 pb-3 mb-2 border-b border-gray-50">
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                              <input 
+                                type="text"
+                                placeholder="Search employee..."
+                                autoFocus
+                                value={employeeSearchTerm}
+                                onChange={(e) => setEmployeeSearchTerm(e.target.value)}
+                                className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-100 rounded-lg text-sm focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:border-indigo-300 outline-none transition-all font-medium"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </div>
+                          </div>
+                          
+                          <div className="max-h-60 overflow-y-auto px-1 custom-scrollbar">
+                            <button
+                              onClick={() => { setSelectedEmployee('All'); setIsEmployeeDropdownOpen(false); }}
+                              className={`w-full text-left px-4 py-2.5 text-sm transition-all rounded-lg mb-0.5 ${selectedEmployee === 'All' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-100' : 'text-gray-700 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                            >
+                               All Employees
+                            </button>
+                            
+                            {employeeList
+                              .filter(emp => emp.name.toLowerCase().includes(employeeSearchTerm.toLowerCase()))
+                              .map(emp => (
+                               <button 
+                                 key={emp.id}
+                                 onClick={() => { setSelectedEmployee(emp.id); setIsEmployeeDropdownOpen(false); }}
+                                 className={`w-full text-left px-4 py-2.5 text-sm transition-all rounded-lg mb-0.5 ${selectedEmployee === emp.id ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-100' : 'text-gray-700 hover:bg-indigo-50 hover:text-indigo-600'}`}
+                               >
+                                  <span className="truncate block">{emp.name}</span>
+                               </button>
+                            ))}
+
+                            {employeeList.filter(emp => emp.name.toLowerCase().includes(employeeSearchTerm.toLowerCase())).length === 0 && (
+                              <div className="py-8 text-center text-gray-400 text-sm italic">
+                                No employee found
+                              </div>
+                            )}
+                          </div>
+                         </div>
+                      </>
+                    )}
+                  </div>
+                )}
+                <div className="relative">
+                <button 
+                  onClick={() => setIsMonthDropdownOpen(!isMonthDropdownOpen)}
+                  className="flex items-center justify-between w-full sm:w-48 px-4 py-2 bg-white border border-blue-200 rounded-xl shadow-sm text-sm font-bold text-gray-700 hover:bg-gray-50 hover:border-blue-300 transition-all"
+                >
+                  {availableMonths.find(m => m.value === selectedMonth)?.display || format(nowIST, 'MMMM yyyy')}
+                  <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${isMonthDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {isMonthDropdownOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setIsMonthDropdownOpen(false)}></div>
+                    <div className="absolute right-0 sm:right-0 mt-2 w-full sm:w-48 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <div className="max-h-60 overflow-y-auto">
+                        {availableMonths.map(m => (
+                           <button 
+                             key={m.value}
+                             onClick={() => {
+                               setSelectedMonth(m.value);
+                               setIsMonthDropdownOpen(false);
+                             }}
+                             className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                                selectedMonth === m.value ? 'bg-indigo-50 text-indigo-700 font-bold border-l-4 border-indigo-600' : 'text-gray-700 hover:bg-gray-50 font-medium border-l-4 border-transparent'
+                             }`}
+                           >
+                              {m.display}
+                           </button>
+                        ))}
+                      </div>
+                     </div>
+                  </>
+                )}
+             </div>
+          </div>
         </div>
         {!globalRecords ? (
           <div className="p-8 text-center text-gray-500">Loading records...</div>
         ) : (
           <>
             <div className="md:hidden">
-            {records.length > 0 ? records.map((record) => (
+            {(filteredRecords || []).length > 0 ? (filteredRecords || []).map((record) => (
               <div key={record.id} className="p-4 border-b border-gray-100 last:border-0 bg-white hover:bg-gray-50 transition-colors">
                 <div className="flex justify-between items-start mb-3">
                   <div className="text-left">
-                    <p className="text-sm font-bold text-gray-900">{record.date}</p>
-                    {user.role === 'Admin' && <p className="text-xs text-indigo-600 font-semibold mt-0.5">{record.employeeName}</p>}
+                    <p className="text-sm font-bold text-gray-900">{record.date || '-'}</p>
+                    {user?.role === 'Admin' && <p className="text-xs text-indigo-600 font-semibold mt-0.5">{record.employeeName || 'Unknown'}</p>}
                   </div>
                   <span className={`px-2.5 py-1 text-[10px] uppercase tracking-wider font-black rounded-full shadow-sm ${
-                    record.status === 'Present' ? 'bg-green-500 text-white' : 
-                    record.status === 'Half Day Present' ? 'bg-orange-400 text-white' : 
-                    'bg-red-500 text-white'
+                    record.status?.includes('Full') ? 'bg-green-500 text-white' : 
+                    record.status?.includes('Half') ? 'bg-orange-400 text-white' : 
+                    'bg-gray-400 text-white'
                   }`}>
-                    {record.status}
+                    {record.status || 'Present'}
                   </span>
                 </div>
 
@@ -613,20 +907,19 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                          <span className="text-xs font-extrabold text-gray-700">{record.distanceTraveled || 0} km</span>
                       </div>
                       <div className="bg-indigo-50 px-3 py-1.5 rounded-lg flex items-center gap-2 border border-indigo-100">
-                         <span className="text-[10px] font-black text-indigo-400 uppercase">Earn:</span>
+                         <span className="text-[10px] font-black text-indigo-400 uppercase">Travel:</span>
                          <span className="text-xs font-extrabold text-indigo-700">₹{record.travelExpense || 0}</span>
                       </div>
                       <div className="bg-orange-50 px-3 py-1.5 rounded-lg flex items-center gap-2 border border-orange-100">
                          <span className="text-[10px] font-black text-orange-400 uppercase">Food:</span>
                          <span className="text-xs font-extrabold text-orange-700">₹{record.foodExpense || 0}</span>
                       </div>
-
                    </div>
                 </div>
 
                 <div className="flex flex-col gap-2">
                    <div className="flex gap-2 w-full">
-                       {record.checkInLocation && (
+                       {record?.checkInLocation && (
                           <button 
                             onClick={() => handleShowMap(record)} 
                             className="flex-1 bg-indigo-600 text-white py-3 rounded-xl font-bold text-sm shadow-md shadow-indigo-200 active:scale-95 transition-all flex items-center justify-center gap-2"
@@ -634,16 +927,20 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                             <Search className="w-4 h-4"/> ROUTE TRACKING
                           </button>
                        )}
-                       {user.role === 'Admin' && record.workDetails?.some(w => w.trim()) && (
-                          <button 
-                            onClick={() => setViewingDetailsFor(record)}
-                            className="bg-white text-indigo-600 border-2 border-indigo-600 px-4 py-3 rounded-xl font-bold text-sm active:scale-95 transition-all shrink-0"
-                          >
-                            DETAILS
-                          </button>
-                       )}
+                       <div className="flex-1">
+                          {record.workDetails?.some(w => w?.trim()) ? (
+                            <button 
+                              onClick={() => setViewingDetailsFor(record)}
+                              className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all flex items-center justify-center gap-2"
+                            >
+                              Work Details
+                            </button>
+                          ) : (
+                            <div className="text-center py-2 text-gray-400 font-black text-xs uppercase tracking-tighter">*</div>
+                          )}
+                       </div>
                    </div>
-                   {record.checkOutLocation && record.checkInLocation && (
+                   {record?.checkOutLocation && record?.checkInLocation && (
                       <a 
                         href={`https://www.google.com/maps/dir/?api=1&origin=${record.checkInLocation.lat},${record.checkInLocation.lng}&destination=${record.checkOutLocation.lat},${record.checkOutLocation.lng}&travelmode=driving`} 
                         target="_blank" 
@@ -670,14 +967,14 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Check Out</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dist / Exp</th>
-                  {user.role === 'Admin' && <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Work Details</th>}
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Work Details</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {useMemo(() => (
-                  records.length > 0 ? records.map((record) => (
-                  <tr key={record.id} className="hover:bg-gray-50 transition-colors">
+                {(filteredRecords || []).length > 0 ? (filteredRecords || []).map((record) => (
+                  <React.Fragment key={record.id}>
+                   <tr className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-900 font-bold">
                       {record.date}
                     </td>
@@ -715,8 +1012,8 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                         {record.checkInLocation && (
                            <div className="flex flex-col gap-2 mt-1.5">
                             <button 
-                              onClick={() => handleShowMap(record)} 
-                              className="bg-indigo-600 text-white px-3 py-2 rounded-lg border border-indigo-700 font-bold text-center hover:bg-indigo-700 transition flex items-center justify-center gap-1 shadow-sm text-[11px] uppercase tracking-wider min-w-[140px]"
+                               onClick={() => handleShowMap(record)} 
+                               className="bg-indigo-600 text-white px-3 py-2 rounded-lg border border-indigo-700 font-bold text-center hover:bg-indigo-700 transition flex items-center justify-center gap-1 shadow-sm text-[11px] uppercase tracking-wider min-w-[140px]"
                             >
                                 <Search className="w-3.5 h-3.5"/>
                                 Route Tracking
@@ -748,15 +1045,18 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                         </div>
                       </div>
                     </td>
-                    {user.role === 'Admin' && (
-                      <td className="px-6 py-4 whitespace-nowrap text-left text-sm text-gray-500">
-                        {record.workDetails && record.workDetails.some(w => w.trim()) ? (
-                           <button onClick={() => setViewingDetailsFor(record)} className="text-indigo-600 hover:text-indigo-800 text-xs font-medium bg-indigo-50 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-colors">
-                             View Details
-                           </button>
-                        ) : '-'}
-                      </td>
-                    )}
+                    <td className="px-6 py-4 text-left text-sm text-gray-500 w-48">
+                      {hasWorkDetails(record) ? (
+                         <button 
+                            onClick={() => setViewingDetailsFor(record)}
+                            className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold text-xs shadow-sm hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 w-full"
+                         >
+                            Show Work Details
+                         </button>
+                      ) : (
+                         <div className="text-center w-full font-black text-gray-300">*</div>
+                      )}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-left">
                       <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                         record.status === 'Present' ? 'bg-green-100 text-green-800' : 
@@ -767,14 +1067,14 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                       </span>
                     </td>
                   </tr>
-                )) : (
-                  <tr>
-                    <td colSpan={user.role === 'Admin' ? "8" : "6"} className="px-6 py-8 text-center text-gray-500">
-                      No attendance records found.
-                    </td>
-                  </tr>
-                )
-                ), [records, user.role])}
+                </React.Fragment>
+               )) : (
+               <tr>
+                 <td colSpan={user.role === 'Admin' ? "8" : "6"} className="px-6 py-8 text-center text-gray-500">
+                   {selectedMonth ? `No records exist for ${availableMonths.find(m => m.value === selectedMonth)?.display || selectedMonth}.` : "No attendance records found."}
+                 </td>
+               </tr>
+             )}
               </tbody>
             </table>
           </div>
@@ -798,34 +1098,65 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
       </div>
 
       {viewingDetailsFor && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col relative z-[101]">
-            <div className="px-6 py-4 flex justify-between items-center border-b border-gray-100 bg-gray-50/50">
+        <div className="fixed inset-0 z-[9999] flex items-start justify-center bg-gray-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300 pt-24 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col relative z-[10000] animate-in zoom-in-95 slide-in-from-top-8 duration-500 ease-out my-auto">
+            <div className="px-8 py-6 flex justify-between items-center border-b border-gray-100 bg-gray-50/50 sticky top-0 z-10">
               <div>
-                <h3 className="text-xl font-bold text-gray-900">Work Details</h3>
-                <p className="text-sm text-gray-500">For {viewingDetailsFor.employeeName} on {viewingDetailsFor.date}</p>
+                <h3 className="text-2xl font-black text-indigo-900 tracking-tight">Work Details</h3>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">For {viewingDetailsFor.employeeName} • {viewingDetailsFor.date}</p>
               </div>
-              <button onClick={() => setViewingDetailsFor(null)} className="text-gray-400 hover:text-gray-600 bg-white hover:bg-gray-100 rounded-full p-2 transition-colors border border-gray-200">
-                <X className="w-5 h-5"/>
+              <button onClick={() => setViewingDetailsFor(null)} className="text-gray-400 hover:text-gray-600 bg-white hover:bg-gray-100 rounded-2xl p-3 transition-all border border-gray-200 shadow-sm active:scale-90">
+                <X className="w-6 h-6"/>
               </button>
             </div>
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
-              <ul className="space-y-4">
-                {viewingDetailsFor.workDetails.filter(w => w.trim()).map((detail, idx) => (
-                   <li key={idx} className="flex gap-4 text-sm text-gray-700 bg-gray-50 p-4 rounded-lg border border-gray-100">
-                     <span className="font-extrabold text-[#9d4edd] mt-0.5 tracking-wider font-mono">{(idx + 1).toString().padStart(2, '0')}.</span>
-                     <span className="leading-relaxed whitespace-pre-wrap">{detail}</span>
-                   </li>
-                ))}
-              </ul>
-              {viewingDetailsFor.workDetails.filter(w => w.trim()).length === 0 && (
-                 <p className="text-center text-gray-500">No specific points were written.</p>
-              )}
-            </div>
-            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end">
-               <button onClick={() => setViewingDetailsFor(null)} className="px-5 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 font-medium hover:bg-gray-50 transition">
-                  Close Review
-               </button>
+            
+            <div className="p-8 overflow-y-auto max-h-[60vh] space-y-6 scrollbar-hide">
+              <div className="flex items-center gap-2 mb-2">
+                 <div className="w-1.5 h-5 bg-indigo-500 rounded-full"></div>
+                 <h4 className="text-xs font-black text-gray-500 uppercase tracking-widest">Employee Notes</h4>
+              </div>
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                {/* 1. Show Individual Points (New Format) */}
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(i => {
+                  const pointText = viewingDetailsFor[`workPoint${i}`];
+                  if (!pointText || !pointText.trim()) return null;
+                  return (
+                    <div key={`point-${i}`} className="flex gap-4 group">
+                      <div className="flex-1 bg-gray-50/50 p-4 rounded-2xl border border-gray-100 group-hover:border-indigo-200 transition-colors">
+                        <p className="text-gray-700 leading-relaxed text-sm font-medium">
+                          <span className="font-black text-indigo-600 mr-2">Point {i}:</span>
+                          {pointText}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+                
+                {/* 2. Show Legacy Array Details (If any and not redundant) */}
+                {viewingDetailsFor.workDetails?.map((detail, idx) => {
+                  if (!detail || !detail.trim()) return null;
+                  // If this detail is identical to any of the workPoint fields, skip to avoid double display
+                  const isRedundant = [1,2,3,4,5,6,7,8,9,10].some(i => viewingDetailsFor[`workPoint${i}`] === detail);
+                  if (isRedundant) return null;
+                  
+                  return (
+                    <div key={`legacy-${idx}`} className="flex gap-4 group">
+                      <div className="flex-1 bg-indigo-50/30 p-4 rounded-2xl border border-indigo-100 group-hover:border-indigo-300 transition-colors">
+                        <p className="text-indigo-900 leading-relaxed text-sm font-medium">
+                          <span className="font-black text-indigo-400 mr-2">Note {idx + 1}:</span>
+                          {detail}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+                
+                {!hasWorkDetails(viewingDetailsFor) && (
+                  <div className="py-12 text-center bg-gray-50/50 rounded-3xl border border-dashed border-gray-200">
+                    <p className="text-gray-400 font-medium italic">No work details recorded for this shift.</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -844,4 +1175,37 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   );
 });
 
-export default Attendance;
+class AttendanceErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("Attendance Render Error:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="max-w-7xl mx-auto px-4 py-16 text-center">
+           <div className="bg-red-50 p-8 rounded-xl border border-red-200 inline-block">
+               <h2 className="text-xl font-bold text-red-700 mb-2">Attendance data could not be loaded</h2>
+               <p className="text-red-500 mb-4">A rendering error occurred. Please refresh the page.</p>
+               <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 transition-colors text-white rounded-lg font-bold">Refresh Page</button>
+           </div>
+        </div>
+      );
+    }
+    return this.props.children; 
+  }
+}
+
+export default function AttendanceWrapper(props) {
+  return (
+    <AttendanceErrorBoundary>
+      <Attendance {...props} />
+    </AttendanceErrorBoundary>
+  );
+}

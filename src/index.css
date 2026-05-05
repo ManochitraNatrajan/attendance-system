@@ -38,8 +38,8 @@ body {
 }
 
 #root {
-  width: 1126px;
-  max-width: 100%;
+  width: 100%;
+  max-width: 1126px;
   margin: 0 auto;
   text-align: center;
   border-inline: 1px solid var(--border);
@@ -47,6 +47,17 @@ body {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+}
+
+@media (max-width: 640px) {
+  #root {
+    border-inline: none;
+    padding-bottom: 80px; /* Space for bottom nav */
+  }
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 h1,

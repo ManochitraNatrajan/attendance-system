@@ -5,7 +5,7 @@ import './index.css'
 import App from './App.jsx'
 
 // Tell the frontend to permanently talk to your live backend on Render
-axios.defaults.baseURL = 'https://attendance-system-4-blz0.onrender.com';
+axios.defaults.baseURL = 'http://localhost:5000'; // Point to local server instead of Render
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, info: null }; }
   static getDerivedStateFromError(error) { return { hasError: true }; }

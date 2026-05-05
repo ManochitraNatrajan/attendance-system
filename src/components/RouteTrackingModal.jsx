@@ -60,6 +60,19 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
   const [error, setError] = useState('');
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [snappedSegments, setSnappedSegments] = useState([]);
+  const [liveTicker, setLiveTicker] = useState(0);
+
+  // Live timer to continuously recalculate active hours for ongoing sessions
+  useEffect(() => {
+     let interval;
+     if (routeData && !routeData.checkOut && !routeData.isCheckedOut && routeData.status !== 'Auto Closed') {
+        interval = setInterval(() => {
+           setLiveTicker(t => t + 1);
+        }, 60000); // update every minute
+     }
+     return () => clearInterval(interval);
+  }, [routeData]);
+
 
   // Format "HH:mm:ss" cleanly without timezone shifts
   const formatShiftTime = (timeData) => {
@@ -178,6 +191,11 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
        endH = ed.getHours();
        endM = ed.getMinutes();
        endS = ed.getSeconds();
+    } else if (sessionState === 'ACTIVE') {
+       let now = new Date();
+       endH = now.getHours();
+       endM = now.getMinutes();
+       endS = now.getSeconds();
     }
     
     // We STRICTLY lock checkout to the exact same year, month, date as checkIn
@@ -189,9 +207,10 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
        // Clamp negative durations
     }
     
-    if (sessionState !== 'ACTIVE') {
-        locs = locs.filter(loc => new Date(loc.timestamp).getTime() <= checkOutTimeMs);
-    }
+    // Do not filter out locations after checkout, they are part of the frozen final state.
+    // if (sessionState !== 'ACTIVE') {
+    //     locs = locs.filter(loc => new Date(loc.timestamp).getTime() <= checkOutTimeMs);
+    // }
 
     // FORCE SEGMENT CREATION
     let rawSegments = [];
@@ -208,13 +227,19 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                 rawSegments.push({ type: 'transit', startIdx: i, endIdx: j, distance: currentDist, duration: currentDur });
                 i++;
             } else {
-                // Peek ahead for stationary duration > 5 mins
+                // Peek ahead for stationary duration > 5 mins (allow up to 2 outlier GPS drift points)
                 let stopEnd = i;
                 let lookAhead = i + 1;
+                let outlierCount = 0;
                 while (lookAhead < locs.length) {
                     let d = getDistanceKm(locs[i].latitude, locs[i].longitude, locs[lookAhead].latitude, locs[lookAhead].longitude) * 1000;
-                    if (d < 30) {
+                    if (d <= 50) { // 50m tolerance for drift
                         stopEnd = lookAhead;
+                        outlierCount = 0; // Reset outliers on good point
+                        lookAhead++;
+                    } else if (outlierCount < 2) {
+                        // Tolerate up to 2 consecutive outliers
+                        outlierCount++;
                         lookAhead++;
                     } else {
                         break;
@@ -277,6 +302,7 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
         mergedSegments.push({ type: (d > 40 ? 'transit_gap' : 'stop_gap'), lat: startLoc.latitude, lng: startLoc.longitude, city: startLoc.city, startTime: lastTime, endTime: checkOutTimeMs, duration: gap });
     }
 
+    let transitCounter = 1;
     for (let seg of mergedSegments) {
         let segStart = seg.startTime || new Date(locs[seg.startIdx].timestamp).getTime();
         let segEnd = seg.endTime || new Date(locs[seg.endIdx].timestamp).getTime();
@@ -287,8 +313,9 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                 totalMins += gap;
                 finalTimeline.push({
                    type: 'transit',
-                   durationMins: gap,
-                   timeRange: `${formatShiftTime(lastTime)} – ${formatShiftTime(segStart)}`,
+                   title: `Transit Point ${transitCounter++}`,
+                   subtitle: 'Moving Location',
+                   timeStr: formatShiftTime(lastTime),
                    timestamp: lastTime + 1
                 });
             }
@@ -296,10 +323,18 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
         
         totalMins += seg.duration;
         if (seg.type.includes('transit')) {
+            const firstLoc = locs[seg.startIdx] || startLoc;
+            const lastLoc = locs[seg.endIdx] || firstLoc;
+            const fromCity = firstLoc.city || 'Origin';
+            const toCity = lastLoc.city || fromCity;
+
             finalTimeline.push({
                type: 'transit',
-               durationMins: seg.duration,
+               title: 'Travelling',
+               subtitle: `${fromCity} → ${toCity}`,
                timeRange: `${formatShiftTime(segStart)} – ${formatShiftTime(segEnd)}`,
+               durationMins: seg.duration,
+               distance: seg.distance, // Added distance
                timestamp: segStart
             });
         } else {
@@ -363,12 +398,12 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
         finalSub = `${finalSub} • ${finalStatus}`;
     }
     
-    // Force rule: remove last 'stop' if checkout exists (to replace it with Checked Out)
-    if (sessionState !== "ACTIVE") {
-        if (finalTimeline.length > 0 && finalTimeline[finalTimeline.length - 1].type === 'stop') {
-            finalTimeline.pop();
-        }
-    }
+    // Do not remove the last stop. The checkout should simply be appended after all valid stops.
+    // if (sessionState !== "ACTIVE") {
+    //     if (finalTimeline.length > 0 && finalTimeline[finalTimeline.length - 1].type === 'stop') {
+    //         finalTimeline.pop();
+    //     }
+    // }
     
     finalTimeline.push({
         type: 'end',
@@ -381,11 +416,25 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
     if (sessionState !== "ACTIVE") {
         processedFinalTimeline = processedFinalTimeline.filter(item => item.title !== "Current Location");
     }
+
+    // Recalculate total stats from timeline for strict balance
+    let balancedTotalMins = 0;
+    let balancedTotalDistMeters = 0;
     
-    return { finalTimeline: processedFinalTimeline, totalMins, finalStatus };
-  }, [routeData]);
+    processedFinalTimeline.forEach(item => {
+        if (item.durationMins) balancedTotalMins += item.durationMins;
+        if (item.distance) balancedTotalDistMeters += item.distance;
+    });
+    
+    return { 
+        finalTimeline: processedFinalTimeline, 
+        totalMins: balancedTotalMins, 
+        totalDistKm: balancedTotalDistMeters / 1000,
+        finalStatus 
+    };
+  }, [routeData, liveTicker]);
   
-  const { finalTimeline: processedTimeline, totalMins, finalStatus } = timelineData;
+  const { finalTimeline: processedTimeline, totalMins, totalDistKm, finalStatus } = timelineData;
   const idleCount = processedTimeline.filter(item => item.type === 'stop').length;
 
   useEffect(() => {
@@ -709,7 +758,7 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                    </div>
                    <div className="bg-indigo-50/50 p-5 rounded-[2rem] border border-indigo-100/50 shadow-sm flex flex-col justify-center">
                      <span className="text-indigo-400 text-[10px] font-black uppercase tracking-widest block mb-1 px-1">Distance Covered</span>
-                     <span className="text-indigo-900 font-black text-2xl tracking-tighter">{(routeData.totalDistanceKm || 0).toFixed(2)} <span className="text-sm">km</span></span>
+                     <span className="text-indigo-900 font-black text-2xl tracking-tighter">{(totalDistKm || 0).toFixed(2)} <span className="text-sm">km</span></span>
                    </div>
                    <div className="bg-orange-50/50 p-5 rounded-[2rem] border border-orange-100/50 shadow-sm flex flex-col justify-center">
                      <span className="text-orange-400 text-[10px] font-black uppercase tracking-widest block mb-1 px-1">Idle Points</span>
@@ -776,28 +825,70 @@ const RouteTrackingModal = memo(function RouteTrackingModal({ employeeId, date, 
                                </div>
                              );
                           } else if (item.type === 'stop') {
+                             const times = item.timeRange.split(' – ');
+                             const startTime = times[0] || '-';
+                             const endTime = times[1] || '-';
                              return (
-                               <div key={i} className="relative z-10">
+                               <div key={i} className="relative z-10 w-full pr-4">
                                  <div className="flex items-start gap-4">
-                                    <div className="w-4 h-4 rounded-full border-4 border-orange-500 bg-orange-500 mt-1 shadow-sm shrink-0"></div>
-                                    <div>
-                                       <h4 className="font-bold text-gray-900 text-sm">{item.title}</h4>
-                                       <p className="text-sm text-gray-600 leading-tight mt-0.5">{item.subtitle}</p>
-                                       <p className="text-xs text-orange-600 font-semibold mt-1">{item.timeRange} ({formatDurationReadable(item.durationMins)})</p>
+                                    <div className="w-4 h-4 rounded-full border-4 border-orange-500 bg-orange-500 mt-1 shadow-sm shrink-0 relative z-10"></div>
+                                    <div className="bg-orange-50/50 p-3.5 rounded-xl border border-orange-100 shadow-sm w-full relative z-10 overflow-hidden">
+                                       <div className="absolute top-0 left-0 w-1 h-full bg-orange-400"></div>
+                                       <h4 className="font-bold text-gray-900 text-sm mb-1 flex items-center gap-1.5">
+                                          <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
+                                          Stop / Idle Point
+                                       </h4>
+                                       <p className="text-sm text-gray-700 leading-tight mb-3 font-medium flex items-start gap-1">
+                                          <MapPin className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
+                                          <span className="break-words">{item.subtitle}</span>
+                                       </p>
+                                       <div className="grid grid-cols-2 gap-2 text-xs mb-2">
+                                         <div className="bg-white px-2.5 py-2 rounded-lg border border-orange-100/50 flex flex-col shadow-sm">
+                                            <span className="text-gray-400 font-bold uppercase text-[9px] tracking-wider mb-0.5">Start Time</span>
+                                            <span className="font-bold text-gray-800">{startTime}</span>
+                                         </div>
+                                         <div className="bg-white px-2.5 py-2 rounded-lg border border-orange-100/50 flex flex-col shadow-sm">
+                                            <span className="text-gray-400 font-bold uppercase text-[9px] tracking-wider mb-0.5">End Time</span>
+                                            <span className="font-bold text-gray-800">{endTime}</span>
+                                         </div>
+                                       </div>
+                                       <div className="bg-orange-100/50 px-3 py-2 rounded-lg border border-orange-200/60 flex items-center justify-between">
+                                            <span className="text-orange-800 font-bold uppercase text-[10px] tracking-wider flex items-center gap-1"><Clock className="w-3 h-3"/> Stop Duration</span>
+                                            <span className="font-black text-orange-700 text-sm">{formatDurationReadable(item.durationMins)}</span>
+                                       </div>
                                     </div>
                                  </div>
                                </div>
                              );
                           } else if (item.type === 'transit') {
                              return (
-                               <div key={i} className="relative z-0">
-                                 <div className="flex items-center gap-3 py-2">
-                                    <div className="w-6 flex justify-center shrink-0 text-green-500 font-bold opacity-80">
-                                       ↓
-                                    </div>
-                                    <div className="flex flex-col bg-green-50/50 px-3 py-1.5 rounded-lg border border-green-100">
-                                       <h4 className="font-bold text-green-700 text-xs flex items-center gap-1.5"><span className="text-[10px]">🟢</span> In Transit</h4>
-                                       <p className="text-xs text-green-600 font-medium opacity-80 mt-0.5">{item.timeRange} ({formatDurationReadable(item.durationMins)})</p>
+                               <div key={i} className="relative z-10 w-full pr-4">
+                                 <div className="flex items-start gap-4">
+                                    <div className="w-3 h-3 rounded-full border-2 border-indigo-400 bg-white mt-1.5 shadow-sm shrink-0 relative z-10"></div>
+                                    <div className="bg-indigo-50/20 p-3 rounded-xl border border-indigo-100/50 shadow-sm w-full relative z-10 overflow-hidden">
+                                       <div className="absolute top-0 left-0 w-1 h-full bg-indigo-400 opacity-40"></div>
+                                       <div className="flex justify-between items-start mb-1">
+                                          <h4 className="font-bold text-indigo-700 text-[10px] uppercase tracking-widest flex items-center gap-1.5">
+                                             <Activity className="w-3 h-3" />
+                                             {item.title}
+                                          </h4>
+                                          {item.distance > 0 && (
+                                            <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter shadow-sm border border-indigo-200">
+                                               {(item.distance / 1000).toFixed(2)} km
+                                            </span>
+                                          )}
+                                       </div>
+                                       <p className="text-sm text-gray-800 leading-tight mb-2 font-black flex items-start gap-2">
+                                          <MapPin className="w-3.5 h-3.5 text-indigo-500 shrink-0 mt-0.5" />
+                                          <span className="break-words">{item.subtitle}</span>
+                                       </p>
+                                       <div className="flex items-center justify-between">
+                                          <div className="bg-white/80 px-2 py-1 rounded-md border border-indigo-100/50 flex items-center gap-1 shadow-sm">
+                                             <Clock className="w-3 h-3 text-indigo-500"/>
+                                             <span className="text-[10px] font-bold text-gray-700">{item.timeRange}</span>
+                                          </div>
+                                          <span className="text-[10px] font-black text-indigo-400 italic">({formatDurationReadable(item.durationMins)})</span>
+                                       </div>
                                     </div>
                                  </div>
                                </div>

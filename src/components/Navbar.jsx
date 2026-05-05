@@ -9,6 +9,12 @@ export default function Navbar() {
 
   const handleLogout = () => {
     localStorage.removeItem('user');
+    // Clear any residual check-in or tracking states
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('checkIn_') || key === 'isCheckedIn') {
+        localStorage.removeItem(key);
+      }
+    });
     window.location.href = '/login';
   };
 
@@ -65,7 +71,7 @@ export default function Navbar() {
       </div>
       
       {/* Mobile nav */}
-      <div className="sm:hidden border-t border-gray-200 bg-white flex justify-around w-full fixed bottom-0 left-0 pb-safe">
+      <div className="sm:hidden border-t border-gray-100 bg-white/95 backdrop-blur-md flex justify-around w-full fixed bottom-0 left-0 pb-safe pt-2 z-[9999] shadow-[0_-4px_12px_rgba(0,0,0,0.05)]">
         {navItems.map((item) => {
           if (item.adminOnly && user?.role !== 'Admin') return null;
           const active = location.pathname === item.path;
@@ -74,11 +80,16 @@ export default function Navbar() {
               key={item.name}
               to={item.path}
               className={clsx(
-                "flex flex-col items-center justify-center w-full py-2 gap-1 text-xs font-medium transition-colors",
-                active ? "text-[var(--accent)]" : "text-gray-500"
+                "flex flex-col items-center justify-center w-full py-1 gap-1 text-[10px] font-bold uppercase tracking-widest transition-all active:scale-90",
+                active ? "text-indigo-600" : "text-gray-400"
               )}
             >
-              <item.icon className="w-5 h-5" />
+              <div className={clsx(
+                "p-2 rounded-2xl transition-all",
+                active ? "bg-indigo-50" : "bg-transparent"
+              )}>
+                <item.icon className={clsx("w-5 h-5", active ? "stroke-[2.5px]" : "stroke-[2px]")} />
+              </div>
               <span>{item.name}</span>
             </Link>
           );

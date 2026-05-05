@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import axios from 'axios';
 import { format } from 'date-fns';
-import { X, Save, DollarSign, Edit, Check, Mail, Download, MessageCircle } from 'lucide-react';
+import { X, Save, DollarSign, Edit, Check, Mail, Download, MessageCircle, ChevronDown } from 'lucide-react';
 
-export default function SalaryModal({ employee, onClose }) {
+const SalaryModal = memo(function SalaryModal({ employee, onClose }) {
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -12,15 +12,63 @@ export default function SalaryModal({ employee, onClose }) {
   const [editingHistory, setEditingHistory] = useState(null);
   const [currentBonus, setCurrentBonus] = useState('');
   const [currentAdvance, setCurrentAdvance] = useState('');
+  const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+  const currentMonthStr = format(nowIST, 'yyyy-MM');
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthStr);
+  const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
+  const [archiveData, setArchiveData] = useState([]);
+
+  const [availableMonths, setAvailableMonths] = useState([{ value: currentMonthStr, display: format(nowIST, 'MMMM yyyy') }]);
+
+  useEffect(() => {
+    const fetchAvailableMonths = async () => {
+      try {
+        const targetId = employee?.id || employee?._id;
+        if (!targetId) return;
+        const res = await axios.get(`/api/attendance/available-months?employeeId=${targetId}`);
+        setAvailableMonths(res.data);
+        if (res.data.length > 0 && !selectedMonth) {
+          setSelectedMonth(res.data[0].value);
+        }
+      } catch (err) {
+        console.error("Failed to fetch available months for salary modal", err);
+      }
+    };
+    fetchAvailableMonths();
+  }, [employee]);
+  
+  // availableMonths handled by the fetchAvailableMonths useEffect above
+
+  const filteredHistory = useMemo(() => {
+    return data?.history ? data.history.filter(r => selectedMonth ? r.month === selectedMonth : true) : [];
+  }, [data?.history, selectedMonth]);
+
 
   const fetchSalaryDetails = async () => {
     try {
       setLoading(true);
+      setData(null);
       setError(null);
       const targetId = employee?.id || employee?._id;
       if (!targetId) throw new Error("Employee ID is completely missing from current data.");
-      const res = await axios.get(`/api/salary/${targetId}`);
+      
+      let url = `/api/salary/${targetId}`;
+      const buster = `t=${Date.now()}`;
+      if (selectedMonth) {
+         url += `?month=${selectedMonth}&${buster}`;
+      } else {
+         url += `?${buster}`;
+      }
+      
+      const res = await axios.get(url, { timeout: 5000 });
       setData(res.data);
+      
+      try {
+        const archRes = await axios.get(`/api/salary/archive/${encodeURIComponent(employee.name)}`, { timeout: 3000 });
+        setArchiveData(archRes.data);
+      } catch(archErr) {
+        console.error("Archive Fetch Error:", archErr);
+      }
     } catch (err) {
       console.error("Salary Fetch Error:", err);
       setError(err.response?.data?.message || err.message || "Failed to load salary data.");
@@ -31,7 +79,7 @@ export default function SalaryModal({ employee, onClose }) {
 
   useEffect(() => {
     fetchSalaryDetails();
-  }, [employee?.id]);
+  }, [employee?.id, selectedMonth]);
 
   const handleSaveMonth = async () => {
     if (!data || !data.currentMonth) return;
@@ -82,8 +130,8 @@ export default function SalaryModal({ employee, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[99998] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col relative z-[99999]">
+    <div className="fixed inset-0 z-[99998] flex items-center justify-center bg-gray-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col relative z-[99999] animate-in fade-in zoom-in-95 slide-in-from-bottom-8 duration-300 ease-out transform-gpu">
         <div className="px-6 py-4 flex justify-between items-center border-b border-gray-100 bg-gray-50/50">
           <div>
             <h3 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
@@ -97,90 +145,144 @@ export default function SalaryModal({ employee, onClose }) {
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto w-full flex-1">
+        <div className="p-6 overflow-y-auto w-full flex-1 scroll-smooth overscroll-contain will-change-scroll">
           {loading ? (
-            <div className="text-center p-8 text-gray-500 animate-pulse">Loading salary information...</div>
+            <div className="space-y-6 w-full opacity-70 animate-pulse mt-2">
+               <div className="h-28 bg-gray-100 rounded-2xl w-full border border-gray-200"></div>
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="h-24 bg-gray-100 rounded-xl border border-gray-200"></div>
+                  <div className="h-24 bg-gray-100 rounded-xl border border-gray-200"></div>
+               </div>
+               <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  <div className="h-28 bg-gray-100 rounded-xl border border-gray-200"></div>
+                  <div className="h-28 bg-gray-100 rounded-xl border border-gray-200"></div>
+                  <div className="h-28 bg-gray-100 rounded-xl border border-gray-200"></div>
+                  <div className="h-28 bg-gray-100 rounded-xl border border-gray-200"></div>
+                  <div className="h-28 bg-gray-100 rounded-xl border border-gray-200"></div>
+               </div>
+               <div className="h-64 bg-gray-100 rounded-2xl w-full mt-8 border border-gray-200"></div>
+            </div>
           ) : data ? (
             <div className="space-y-8">
-              {/* CURRENT MONTH CARD */}
-              <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-100 rounded-2xl p-6 shadow-sm">
-                <h4 className="text-lg font-bold text-indigo-900 mb-4 border-b border-indigo-200/50 pb-2">
-                  Current Month Estimation ({format(new Date(data.currentMonth.month + '-01'), 'MMMM yyyy')})
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
-                    <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider tooltip" title="Days physically present">Present Days</span>
-                    <div className="text-2xl font-bold text-gray-900 mt-1">{data.currentMonth.totalDaysWorked} <span className="text-sm font-medium text-gray-400">/ {data.currentMonth.expectedWorkingDays}</span></div>
+                <div className="bg-[#f8faff] border border-blue-100 rounded-3xl p-8 shadow-sm mb-8 relative transition-all">
+                  <div className="text-center mb-8">
+                    <h4 className="text-xl font-bold text-indigo-900 flex items-center justify-center gap-2">
+                      Current Month Estimation ({format(new Date(selectedMonth + '-01'), 'MMMM yyyy')})
+                      <div className="relative ml-4 inline-block text-left">
+                        <button 
+                          onClick={() => setIsMonthDropdownOpen(!isMonthDropdownOpen)}
+                          className="flex items-center gap-2 px-3 py-1 bg-white border border-blue-200 rounded-lg shadow-sm text-sm font-medium text-gray-600 hover:bg-gray-50 transition-all"
+                        >
+                          Change
+                          <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isMonthDropdownOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                        
+                        {isMonthDropdownOpen && (
+                          <>
+                            <div className="fixed inset-0 z-40" onClick={() => setIsMonthDropdownOpen(false)}></div>
+                            <div className="absolute left-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                              <div className="max-h-60 overflow-y-auto">
+                                {availableMonths.map(m => (
+                                   <button 
+                                     key={m.value}
+                                     onClick={() => {
+                                       setSelectedMonth(m.value);
+                                       setIsMonthDropdownOpen(false);
+                                     }}
+                                     className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                                        selectedMonth === m.value ? 'bg-indigo-50 text-indigo-700 font-bold border-l-4 border-indigo-600' : 'text-gray-700 hover:bg-gray-50'
+                                     }`}
+                                   >
+                                      {m.display}
+                                   </button>
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </h4>
                   </div>
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
-                    <span className="text-xs text-indigo-500 font-semibold uppercase tracking-wider tooltip" title="Includes Free Sundays + Present Days">Paid Days</span>
-                    <div className="text-2xl font-bold text-indigo-700 mt-1">{data.currentMonth.totalPaidDays} <span className="text-sm font-medium text-indigo-300">/ {data.currentMonth.daysInMonth}</span></div>
-                  </div>
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
-                    <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Base Monthly</span>
-                    <div className="text-2xl font-bold text-gray-900 mt-1">₹{data.currentMonth.monthlySalary}</div>
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
-                    <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Bonus (+)</span>
-                    <div className="flex items-center mt-1">
-                      <span className="text-xl font-bold text-green-600 mr-1">₹</span>
-                      <input
-                        type="number"
-                        className="w-full text-xl font-bold text-gray-900 border-b border-gray-200 focus:border-indigo-500 outline-none pb-1 bg-transparent"
-                        value={currentBonus}
-                        onChange={(e) => setCurrentBonus(e.target.value)}
-                        placeholder="0"
-                      />
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Present Days</span>
+                      <div className="text-3xl font-black text-gray-800">
+                        {data.currentMonth.totalDaysWorked} <span className="text-gray-300 text-xl">/ {data.currentMonth.expectedWorkingDays}</span>
+                      </div>
+                    </div>
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest mb-2">Paid Days</span>
+                      <div className="text-3xl font-black text-indigo-600">
+                        {data.currentMonth.totalPaidDays} <span className="text-indigo-200 text-xl">/ {data.currentMonth.daysInMonth}</span>
+                      </div>
+                    </div>
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Base Monthly</span>
+                      <div className="text-3xl font-black text-gray-800">₹{data.currentMonth.monthlySalary}</div>
                     </div>
                   </div>
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
-                    <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Travel (+)</span>
-                    <div className="text-2xl font-bold text-gray-900 mt-1">₹{data.currentMonth.totalTravelExpense || 0}</div>
-                  </div>
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
-                    <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Food (+)</span>
-                    <div className="text-2xl font-bold text-gray-900 mt-1">₹{data.currentMonth.totalFoodExpense || 0}</div>
-                  </div>
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-indigo-50/50">
-                    <span className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Advance / Deductions (-)</span>
-                    <div className="flex items-center mt-1">
-                      <span className="text-xl font-bold text-red-500 mr-1">₹</span>
-                      <input
-                        type="number"
-                        className="w-full text-xl font-bold text-gray-900 border-b border-gray-200 focus:border-red-500 outline-none pb-1 bg-transparent"
-                        value={currentAdvance}
-                        onChange={(e) => setCurrentAdvance(e.target.value)}
-                        placeholder="0"
-                      />
+
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Bonus (+)</span>
+                      <div className="flex items-center text-green-600 font-black text-xl">
+                        <span>₹</span>
+                        <input 
+                          type="number" 
+                          value={currentBonus} 
+                          onChange={(e) => setCurrentBonus(e.target.value)}
+                          placeholder="0"
+                          className="w-full bg-transparent border-b border-gray-100 focus:border-green-400 outline-none text-center ml-1 py-1"
+                        />
+                      </div>
+                    </div>
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Travel (+)</span>
+                      <div className="text-xl font-black text-gray-800">₹{data.currentMonth.totalTravelExpense}</div>
+                    </div>
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Food (+)</span>
+                      <div className="text-xl font-black text-gray-800">₹{data.currentMonth.totalFoodExpense}</div>
+                    </div>
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Advance / Deductions (-)</span>
+                      <div className="flex items-center text-red-500 font-black text-xl">
+                        <span>₹</span>
+                        <input 
+                          type="number" 
+                          value={currentAdvance} 
+                          onChange={(e) => setCurrentAdvance(e.target.value)}
+                          placeholder="0"
+                          className="w-full bg-transparent border-b border-gray-100 focus:border-red-400 outline-none text-center ml-1 py-1"
+                        />
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-4 rounded-2xl shadow-lg flex flex-col items-center justify-center text-center text-white">
+                      <span className="text-[10px] text-white/70 font-bold uppercase tracking-widest mb-2">Total Net Pay</span>
+                      <div className="text-xl font-black">
+                        ₹{Math.round((data.currentMonth.estimatedSalary || 0) + (Number(currentBonus) || 0) - (Number(currentAdvance) || 0) + (data.currentMonth.totalTravelExpense || 0) + (data.currentMonth.totalFoodExpense || 0)).toLocaleString()}
+                      </div>
                     </div>
                   </div>
-                  <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 rounded-xl shadow-md text-white flex flex-col justify-center border border-indigo-500">
-                    <span className="text-xs text-indigo-100 font-semibold uppercase tracking-wider">Total Net Pay</span>
-                    <div className="text-3xl font-extrabold mt-1">
-                      ₹{((data.currentMonth.estimatedSalary || 0) + (Number(currentBonus) || 0) - (Number(currentAdvance) || 0) + (data.currentMonth.totalTravelExpense || 0) + (data.currentMonth.totalFoodExpense || 0)).toLocaleString()}
-                    </div>
+
+                  <div className="flex justify-center mt-8">
+                    <button
+                      onClick={handleSaveMonth}
+                      disabled={saving}
+                      className="flex items-center gap-2 bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg hover:shadow-indigo-200 active:scale-95 disabled:opacity-70"
+                    >
+                      <Save className="w-5 h-5" />
+                      {saving ? 'Saving...' : 'Finalize & Save Month'}
+                    </button>
                   </div>
                 </div>
-
-                <div className="flex justify-end">
-                  <button
-                    onClick={handleSaveMonth}
-                    disabled={saving}
-                    className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-indigo-700 transition shadow-md disabled:opacity-70 disabled:cursor-not-allowed"
-                  >
-                    <Save className="w-4 h-4" />
-                    {saving ? 'Saving...' : 'Finalize & Save Month'}
-                  </button>
-                </div>
-              </div>
-
               {/* HISTORY TABLE */}
               <div>
-                <h4 className="text-lg font-bold text-gray-900 mb-4">Salary History</h4>
-                {data.history && data.history.length > 0 ? (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 relative">
+                  <h4 className="text-lg font-bold text-gray-900">Salary History</h4>
+                </div>
+                {filteredHistory && filteredHistory.length > 0 ? (
                   <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="overflow-x-auto">
                       <table className="min-w-full divide-y divide-gray-200">
@@ -199,7 +301,7 @@ export default function SalaryModal({ employee, onClose }) {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200 bg-white">
-                        {data.history.map(record => {
+                        {filteredHistory.map(record => {
                           const isEditing = editingHistory === record.id;
                           return (
                             <tr key={record.id} className="hover:bg-gray-50">
@@ -332,6 +434,40 @@ export default function SalaryModal({ employee, onClose }) {
                   </div>
                 )}
               </div>
+              
+              {/* ARCHIVED RECORDS TABLE */}
+              {archiveData && archiveData.length > 0 && (
+                <div className="mt-8">
+                  <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                    <Save className="w-5 h-5 text-gray-500" />
+                    Archived Salary Summaries
+                  </h4>
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-100">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Month</th>
+                            <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Total Days</th>
+                            <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Total Hours</th>
+                            <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Final Salary</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200 bg-white">
+                          {archiveData.map(arch => (
+                            <tr key={arch.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{arch.month}</td>
+                              <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 text-right">{arch.totalWorkingDays}</td>
+                              <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 text-right">{arch.totalWorkingHours}</td>
+                              <td className="px-4 py-4 whitespace-nowrap text-sm font-bold text-gray-900 text-right">₹{arch.finalSalary.toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-center p-8 text-red-500 bg-red-50 rounded-xl m-4 border border-red-100 flex flex-col items-center gap-2">
@@ -344,4 +480,6 @@ export default function SalaryModal({ employee, onClose }) {
       </div>
     </div>
   );
-}
+});
+
+export default SalaryModal;
