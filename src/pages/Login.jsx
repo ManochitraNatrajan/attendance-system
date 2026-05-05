@@ -10,10 +10,17 @@ export default function Login() {
   const [dbStatus, setDbStatus] = useState('checking');
 
   useEffect(() => {
+    console.log("Attempting to connect to API at:", axios.defaults.baseURL);
     // Quick check to see if database is reachable
     axios.get('/api/health')
-      .then(res => setDbStatus(res.data.status))
-      .catch(() => setDbStatus('offline'));
+      .then(res => {
+        console.log("Health check response:", res.data);
+        setDbStatus(res.data.status);
+      })
+      .catch(err => {
+        console.error("Health check failed:", err.message);
+        setDbStatus('offline');
+      });
   }, []);
 
   const handleLogin = async (e) => {

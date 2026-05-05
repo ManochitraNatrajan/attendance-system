@@ -364,7 +364,13 @@ cron.schedule('0 0 1 * *', async () => {
   timezone: "Asia/Kolkata"
 });
 
-app.use(cors());
+// CORS configuration
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
 app.use(compression());
 app.use(express.json());
 
@@ -1650,14 +1656,24 @@ app.get('/api/ping', (req, res) => res.json({ status: 'ok' }));
 
 // === Serve Static Files in Production ===
 const distPath = path.join(__dirname, '../dist');
-app.use(express.static(distPath));
+const fs = await import('fs');
 
-// === Catch-all Route for SPA Navigation ===
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(distPath, 'index.html'));
-  }
-});
+if (fs.existsSync(distPath)) {
+  console.log(`[Static] Serving frontend from: ${distPath}`);
+  app.use(express.static(distPath));
+  
+  // Catch-all ONLY if dist exists
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      res.sendFile(path.join(distPath, 'index.html'));
+    }
+  });
+} else {
+  console.warn(`[Static] Warning: 'dist' folder not found at ${distPath}. Skipping static file serving.`);
+  app.get('/', (req, res) => {
+    res.json({ message: "Sri Krishna Dairy API is running. (Frontend not served from here)" });
+  });
+}
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
