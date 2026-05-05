@@ -147,36 +147,49 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/attendance_system';
+const MONGODB_URI = process.env.MONGODB_URI;
 
-mongoose.connect(MONGODB_URI)
+if (!MONGODB_URI) {
+  console.error("FATAL ERROR: MONGODB_URI is not defined in environment variables!");
+}
+
+const connectWithRetry = () => {
+  console.log('Attempting to connect to MongoDB...');
+  mongoose.connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+  })
   .then(async () => {
-    console.log('Connected to MongoDB');
+    console.log('SUCCESS: Connected to MongoDB');
     
     // Force close old sessions that weren't closed properly
     const forceCloseOldSessions = async () => {
-      const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
-      const today = format(nowIST, 'yyyy-MM-dd');
-      
-      const unclosedSessions = await Attendance.find({ date: { $ne: today }, checkOut: null });
-      if (unclosedSessions.length > 0) {
-        console.log(`Found ${unclosedSessions.length} unclosed old sessions. Auto-closing them.`);
-        for (const session of unclosedSessions) {
-          if (session.isCheckedOut) continue;
-          session.checkOut = "23:59:00";
-          session.checkoutType = "auto";
-          session.isCheckedOut = true;
-          
-          const inTime = new Date(`1970-01-01T${session.checkIn}Z`);
-          const outTime = new Date(`1970-01-01T23:59:00Z`);
-          const diffHrs = (outTime - inTime) / (1000 * 60 * 60);
-          session.status = diffHrs >= 4 ? "Present (Auto Closed)" : "Half Day Present (Auto Closed)";
-          if (session.routeTracking && !session.routeTracking.endedAt) {
-             session.routeTracking.endedAt = new Date(`${session.date}T23:59:00+05:30`);
-             session.markModified('routeTracking');
+      try {
+        const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+        const today = format(nowIST, 'yyyy-MM-dd');
+        
+        const unclosedSessions = await Attendance.find({ date: { $ne: today }, checkOut: null });
+        if (unclosedSessions.length > 0) {
+          console.log(`[Maintenance] Auto-closing ${unclosedSessions.length} old sessions.`);
+          for (const session of unclosedSessions) {
+            if (session.isCheckedOut) continue;
+            session.checkOut = "23:59:00";
+            session.checkoutType = "auto";
+            session.isCheckedOut = true;
+            
+            const inTime = new Date(`1970-01-01T${session.checkIn}Z`);
+            const outTime = new Date(`1970-01-01T23:59:00Z`);
+            const diffHrs = (outTime - inTime) / (1000 * 60 * 60);
+            session.status = diffHrs >= 4 ? "Present (Auto Closed)" : "Half Day Present (Auto Closed)";
+            if (session.routeTracking && !session.routeTracking.endedAt) {
+               session.routeTracking.endedAt = new Date(`${session.date}T23:59:00+05:30`);
+               session.markModified('routeTracking');
+            }
+            await session.save();
           }
-          await session.save();
         }
+      } catch (e) {
+        console.error("Maintenance task failed:", e);
       }
     };
     await forceCloseOldSessions();
@@ -194,7 +207,13 @@ mongoose.connect(MONGODB_URI)
       console.log('Default admin created.');
     }
   })
-  .catch(err => console.error('MongoDB connection error:', err));
+  .catch(err => {
+    console.error('MongoDB connection error. Retrying in 5 seconds...', err.message);
+    setTimeout(connectWithRetry, 5000);
+  });
+};
+
+connectWithRetry();
 
 // Auto Checkout Cron Job at 11:59 PM EVERY DAY
 cron.schedule('59 23 * * *', async () => {
@@ -383,6 +402,7 @@ app.get('/api/time', (req, res) => {
 
 app.get('/api/health', (req, res) => {
   const isConnected = mongoose.connection.readyState === 1;
+  console.log(`[Health Check] DB ReadyState: ${mongoose.connection.readyState} (${isConnected ? 'online' : 'offline'})`);
   res.json({ status: isConnected ? 'online' : 'database_disconnected' });
 });
 
