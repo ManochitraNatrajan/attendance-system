@@ -5,7 +5,9 @@ import './index.css'
 import App from './App.jsx'
 
 // Dynamic API Base URL for local and production
-axios.defaults.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+axios.defaults.baseURL = API_URL;
+console.log(`[Config] API Base URL set to: ${API_URL}`);
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, info: null }; }
   static getDerivedStateFromError(error) { return { hasError: true }; }
