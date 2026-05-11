@@ -13,6 +13,7 @@ import { Server } from 'socket.io';
 import cron from 'node-cron';
 
 const __filename = fileURLToPath(import.meta.url);
+
 const __dirname = path.dirname(__filename);
 
 // =======================
@@ -149,51 +150,63 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
-if (!MONGODB_URI) {
-  console.error("FATAL ERROR: MONGODB_URI is not defined in environment variables!");
-}
-
-const connectWithRetry = () => {
-  console.log('Attempting to connect to MongoDB...');
-  mongoose.connect(MONGODB_URI, {
+const connectWithRetry = async () => {
+  const options = {
     serverSelectionTimeoutMS: 5000,
     socketTimeoutMS: 45000,
-  })
-  .then(async () => {
-    console.log('SUCCESS: Connected to MongoDB');
-    
-    // Force close old sessions that weren't closed properly
-    const forceCloseOldSessions = async () => {
-      try {
-        const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
-        const today = format(nowIST, 'yyyy-MM-dd');
-        
-        const unclosedSessions = await Attendance.find({ date: { $ne: today }, checkOut: null });
-        if (unclosedSessions.length > 0) {
-          console.log(`[Maintenance] Auto-closing ${unclosedSessions.length} old sessions.`);
-          for (const session of unclosedSessions) {
-            if (session.isCheckedOut) continue;
-            session.checkOut = "23:59:00";
-            session.checkoutType = "auto";
-            session.isCheckedOut = true;
-            
-            const inTime = new Date(`1970-01-01T${session.checkIn}Z`);
-            const outTime = new Date(`1970-01-01T23:59:00Z`);
-            const diffHrs = (outTime - inTime) / (1000 * 60 * 60);
-            session.status = diffHrs >= 4 ? "Present (Auto Closed)" : "Half Day Present (Auto Closed)";
-            if (session.routeTracking && !session.routeTracking.endedAt) {
-               session.routeTracking.endedAt = new Date(`${session.date}T23:59:00+05:30`);
-               session.markModified('routeTracking');
-            }
-            await session.save();
-          }
-        }
-      } catch (e) {
-        console.error("Maintenance task failed:", e);
-      }
-    };
-    await forceCloseOldSessions();
+    family: 4,
+    heartbeatFrequencyMS: 10000,
+  };
 
+  console.log(' [Database] Attempting connection to MongoDB Atlas...');
+  try {
+    await mongoose.connect(MONGODB_URI, options);
+    console.log(' [Database] SUCCESS: Connected to MongoDB Atlas');
+  } catch (err) {
+    console.error(' [Database] FAILURE: Connection error. Retrying in 5 seconds...', err.message);
+    setTimeout(connectWithRetry, 5000);
+  }
+};
+
+mongoose.connection.on('disconnected', () => {
+  console.warn(' [Database] Event: Disconnected. Attempting to reconnect...');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error(' [Database] Event: Error -', err.message);
+});
+
+connectWithRetry();
+
+// Run maintenance tasks once connection is established
+mongoose.connection.once('open', async () => {
+  try {
+    // 1. Force close old sessions
+    const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const today = format(nowIST, 'yyyy-MM-dd');
+    const unclosedSessions = await Attendance.find({ date: { $ne: today }, checkOut: null });
+    
+    if (unclosedSessions.length > 0) {
+      console.log(` [Maintenance] Auto-closing ${unclosedSessions.length} old sessions.`);
+      for (const session of unclosedSessions) {
+        if (session.isCheckedOut) continue;
+        session.checkOut = "23:59:00";
+        session.checkoutType = "auto";
+        session.isCheckedOut = true;
+        
+        const inTime = new Date(`1970-01-01T${session.checkIn}Z`);
+        const outTime = new Date(`1970-01-01T23:59:00Z`);
+        const diffHrs = (outTime - inTime) / (1000 * 60 * 60);
+        session.status = diffHrs >= 4 ? "Present (Auto Closed)" : "Half Day Present (Auto Closed)";
+        if (session.routeTracking && !session.routeTracking.endedAt) {
+           session.routeTracking.endedAt = new Date(`${session.date}T23:59:00+05:30`);
+           session.markModified('routeTracking');
+        }
+        await session.save();
+      }
+    }
+
+    // 2. Create default admin if not exists
     const adminExists = await Employee.countDocuments();
     if (adminExists === 0) {
       await Employee.create({
@@ -204,16 +217,14 @@ const connectWithRetry = () => {
         monthlySalary: 30000,
         dailyWage: 0
       });
-      console.log('Default admin created.');
+      console.log(' [Maintenance] Default admin created.');
     }
-  })
-  .catch(err => {
-    console.error('MongoDB connection error. Retrying in 5 seconds...', err.message);
-    setTimeout(connectWithRetry, 5000);
-  });
-};
+  } catch (err) {
+    console.error(' [Maintenance] Initialization task failed:', err.message);
+  }
+});
 
-connectWithRetry();
+
 
 // Auto Checkout Cron Job at 11:59 PM EVERY DAY
 cron.schedule('59 23 * * *', async () => {
@@ -249,8 +260,8 @@ cron.schedule('59 23 * * *', async () => {
           }
           record.markModified('routeTracking');
       }
-      if (req.app.locals.io) {
-        req.app.locals.io.emit('employee-check-out', { employeeId: record.employeeId.toString() });
+      if (app.locals.io) {
+        app.locals.io.emit('employee-check-out', { employeeId: record.employeeId.toString() });
       }
       await record.save();
       console.log(`Auto closed attendance for Employee: ${record.employeeId}`);
@@ -373,6 +384,21 @@ app.use(cors({
 }));
 app.use(compression());
 app.use(express.json());
+
+// === PRODUCTION HEALTH CHECK ===
+app.get('/health', (req, res) => {
+  const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+  if (dbStatus !== 'connected') {
+    console.error(' [Health] Check failed: Database disconnected');
+  }
+  res.status(dbStatus === 'connected' ? 200 : 503).json({
+    status: dbStatus === 'connected' ? 'OK' : 'ERROR',
+    uptime: Math.round(process.uptime()),
+    database: dbStatus,
+    timestamp: new Date().toISOString()
+  });
+});
+
 
 // === Caching & OTP Storage ===
 const employeeCache = { data: null, lastFetched: 0 };
