@@ -5,7 +5,7 @@ import './index.css'
 import App from './App.jsx'
 
 // Dynamic API Base URL for local and production
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_URL = import.meta.env.VITE_API_URL || 'https://attendance-system-4-blz0.onrender.com';
 axios.defaults.baseURL = API_URL;
 console.log(`[Config] API Base URL set to: ${API_URL}`);
 class ErrorBoundary extends React.Component {
