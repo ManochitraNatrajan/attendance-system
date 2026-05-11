@@ -1,20 +1,20 @@
 {
-  "name": "Sri Krishna Dairy",
-  "short_name": "Krishna Dairy",
-  "start_url": ".",
+  "name": "Sri Krishna Milk Dairy",
+  "short_name": "SK Dairy",
+  "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#4f46e5",
+  "theme_color": "#2563eb",
   "description": "Attendance and Salary Management System",
   "icons": [
     {
-      "src": "/logo.png",
+      "src": "/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/logo.png",
+      "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
