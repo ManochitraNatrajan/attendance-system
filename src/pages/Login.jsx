@@ -51,11 +51,7 @@ export default function Login() {
     } catch (err) {
       console.error("Login attempt failed:", err);
       const msg = err.response?.data?.message || 'Failed to connect to server';
-      if (dbStatus !== 'online') {
-          setError(msg + ' (Database appears to be offline)');
-      } else {
-          setError(msg);
-      }
+      setError(msg);
     } finally {
       setLoading(false);
     }

@@ -56,7 +56,7 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/api': 'http://localhost:5000'
+      '/api': 'https://attendance-system-4-blz0.onrender.com'
     }
   },
   build: {

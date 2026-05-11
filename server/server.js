@@ -162,6 +162,9 @@ const connectWithRetry = async () => {
   try {
     await mongoose.connect(MONGODB_URI, options);
     console.log(' [Database] SUCCESS: Connected to MongoDB Atlas');
+    server.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
   } catch (err) {
     console.error(' [Database] FAILURE: Connection error. Retrying in 5 seconds...', err.message);
     setTimeout(connectWithRetry, 5000);
@@ -1701,6 +1704,3 @@ if (fs.existsSync(distPath)) {
   });
 }
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
