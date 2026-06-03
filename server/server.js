@@ -136,7 +136,7 @@ const SalaryArchive = mongoose.model('SalaryArchive', salaryArchiveSchema);
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: true, methods: ['GET', 'POST'], credentials: true }
 });
 app.locals.io = io;
 
