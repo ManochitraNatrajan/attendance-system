@@ -443,7 +443,7 @@ app.get('/api/time', (req, res) => {
 });
 
 app.get('/api/config/apk-url', (req, res) => {
-  const apkUrl = process.env.APK_DOWNLOAD_URL || 'https://raw.githubusercontent.com/user/repo/main/app-release.apk';
+  const apkUrl = process.env.APK_DOWNLOAD_URL || '/attendance-app.apk';
   res.json({ url: apkUrl });
 });
 

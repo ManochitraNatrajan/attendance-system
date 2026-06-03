@@ -87,9 +87,17 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
           ? '/api/attendance/available-months' 
           : `/api/attendance/available-months?employeeId=${userObj.id}`;
         const res = await axios.get(endpoint);
-        setAvailableMonths(res.data);
-        if (res.data.length > 0 && !selectedMonth) {
-          setSelectedMonth(res.data[0].value);
+        let fetchedMonths = Array.isArray(res.data) ? res.data : [];
+        if (!fetchedMonths.some(m => m.value === currentMonthStr)) {
+          fetchedMonths = [{ value: currentMonthStr, display: format(nowIST, 'MMMM yyyy') }, ...fetchedMonths];
+        }
+        // Ensure they are sorted descending (latest first)
+        fetchedMonths.sort((a, b) => b.value.localeCompare(a.value));
+        
+        setAvailableMonths(fetchedMonths);
+        
+        if (fetchedMonths.length > 0 && !selectedMonth) {
+          setSelectedMonth(fetchedMonths[0].value);
         }
         if (userObj.role === 'Admin') {
            const empRes = await axios.get('/api/employees');

@@ -25,10 +25,16 @@ const SalaryModal = memo(function SalaryModal({ employee, onClose }) {
       try {
         const targetId = employee?.id || employee?._id;
         if (!targetId) return;
-        const res = await axios.get(`/api/attendance/available-months?employeeId=${targetId}`);
-        setAvailableMonths(res.data);
-        if (res.data.length > 0 && !selectedMonth) {
-          setSelectedMonth(res.data[0].value);
+        const res = await axios.get(`/api/attendance/available-months`);
+        let fetchedMonths = Array.isArray(res.data) ? res.data : [];
+        if (!fetchedMonths.some(m => m.value === currentMonthStr)) {
+          fetchedMonths = [{ value: currentMonthStr, display: format(nowIST, 'MMMM yyyy') }, ...fetchedMonths];
+        }
+        fetchedMonths.sort((a, b) => b.value.localeCompare(a.value));
+        
+        setAvailableMonths(fetchedMonths);
+        if (fetchedMonths.length > 0 && !selectedMonth) {
+          setSelectedMonth(fetchedMonths[0].value);
         }
       } catch (err) {
         console.error("Failed to fetch available months for salary modal", err);
