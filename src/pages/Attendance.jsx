@@ -763,8 +763,8 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         </div>
       )}
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-8 transition-all hover:shadow-md">
-        <div className="px-6 py-5 border-b border-blue-100/50 bg-gradient-to-br from-blue-50/80 to-indigo-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 mb-8 transition-all hover:shadow-md">
+        <div className="px-6 py-5 border-b border-blue-100/50 bg-gradient-to-br from-blue-50/80 to-indigo-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative rounded-t-2xl">
           <h3 className="text-lg font-bold text-indigo-950 text-left">Attendance History</h3>
           <div className="relative z-50 flex items-center gap-2">
                 {user?.role === 'Admin' && (

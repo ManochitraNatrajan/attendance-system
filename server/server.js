@@ -387,7 +387,7 @@ cron.schedule('0 0 1 * *', async () => {
 
 // CORS configuration
 app.use(cors({
-  origin: '*',
+  origin: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true

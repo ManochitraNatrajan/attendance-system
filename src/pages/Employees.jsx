@@ -149,31 +149,35 @@ const Employees = memo(function Employees({ employees: globalEmployees, refreshE
               {filteredEmployees.length > 0 ? filteredEmployees.map((emp) => (
                 <div key={emp.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm active:scale-95 transition-all">
                   <div className="flex justify-between items-start mb-3">
-                    <button 
-                      onClick={() => setViewingSalaryEmployee(emp)}
-                      className="text-left"
-                    >
-                      <h4 className="font-black text-indigo-600 text-lg">{emp.name}</h4>
-                      <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{emp.contact}</p>
-                    </button>
+                    <div className="text-left">
+                      <h4 className="font-black text-indigo-900 text-lg">{emp.name}</h4>
+                      <p className="text-xs text-gray-500 font-bold uppercase tracking-widest">{emp.contact}</p>
+                    </div>
                     <span className={`px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded-full ${emp.role === 'Admin' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
                       {emp.role}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center pt-3 border-t border-gray-50">
+                  <div className="flex justify-between items-center pt-3 border-t border-gray-50 mb-3">
                     <div className="flex flex-col">
                        <span className="text-[9px] text-gray-400 uppercase font-black">Monthly Salary</span>
                        <span className="font-bold text-gray-900 text-sm">₹{emp.monthlySalary?.toLocaleString() || '0'}</span>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => handleOpenModal(emp)} className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                      <button onClick={() => handleOpenModal(emp)} className="p-2 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 transition">
                         <Edit2 className="w-4 h-4" />
                       </button>
-                      <button onClick={() => handleDelete(emp.id)} className="p-2 bg-red-50 text-red-600 rounded-xl">
+                      <button onClick={() => handleDelete(emp.id)} className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
+                  <button 
+                    onClick={() => setViewingSalaryEmployee(emp)}
+                    className="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2.5 rounded-xl font-bold text-sm border border-indigo-100 active:scale-95 transition-all flex items-center justify-center gap-2"
+                  >
+                    <DollarSign className="w-4 h-4" />
+                    View Salary Slip
+                  </button>
                 </div>
               )) : (
                 <div className="p-8 text-center text-gray-500 bg-white rounded-2xl border border-dashed">No employees found.</div>
