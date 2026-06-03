@@ -16,9 +16,18 @@ const Dashboard = memo(function Dashboard({ stats, refreshStats, employeeList = 
   const [isDownloadingApp, setIsDownloadingApp] = useState(false);
   const [downloadError, setDownloadError] = useState('');
   const [downloadSuccess, setDownloadSuccess] = useState('');
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+
   useEffect(() => {
     // Silently refresh stats in the background on mount
     if (refreshStats) refreshStats();
+
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
   }, []);
 
   // Use empty defaults if still null for some reason (fail-safe)
@@ -31,6 +40,16 @@ const Dashboard = memo(function Dashboard({ stats, refreshStats, employeeList = 
   };
 
   const handleDownloadApp = async () => {
+    if (deferredPrompt) {
+      // Trigger the PWA install prompt instead of downloading the APK
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+      return;
+    }
+
     setIsDownloadingApp(true);
     setDownloadError('');
     setDownloadSuccess('');
@@ -77,7 +96,7 @@ const Dashboard = memo(function Dashboard({ stats, refreshStats, employeeList = 
             className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-medium text-sm flex items-center gap-2 shadow-sm ${isDownloadingApp ? 'opacity-70 cursor-not-allowed' : ''}`}
           >
             <Download className={`w-4 h-4 ${isDownloadingApp ? 'animate-bounce' : ''}`} />
-            {isDownloadingApp ? 'Fetching Link...' : 'Download App'}
+            {isDownloadingApp ? 'Fetching Link...' : (deferredPrompt ? 'Install App' : 'Download App')}
           </button>
         </div>
       </div>
