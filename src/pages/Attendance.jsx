@@ -261,22 +261,40 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   const handleCheckIn = async () => {
     if (!navigator.geolocation) {
       alert('Geolocation is not supported by your browser');
-      return;
     }
 
     setActionLoading(true);
+    let latitude = null;
+    let longitude = null;
+    let locationName = 'Unknown Location (GPS Failed)';
+
     try {
       const position = await getExactLocation();
-      const { latitude, longitude } = position.coords;
+      latitude = position.coords.latitude;
+      longitude = position.coords.longitude;
+      locationName = await fetchLocationName(latitude, longitude);
+    } catch (err) {
+      console.error("GPS Check-in error:", err);
+      if (err.message?.includes('accuracy') || err.message?.includes('timeout') || err.code === 2 || err.code === 3) {
+         alert('GPS WARNING: Could not get an accurate location within the time limit. Checking in without location.');
+      } else if (err.code === 1 || err.message?.includes('denied')) {
+         alert('PERMISSION WARNING: Location access is denied. Please enable location permissions. Checking in without location.');
+      } else {
+         alert('Failed to get location. Checking in without location.');
+      }
+    }
+
+    try {
       const checkInTimeStr = getSyncedTime().toISOString();
       
-      localStorage.setItem(`checkIn_${user.id}_${todayStr}`, JSON.stringify({
-        checkInTime: checkInTimeStr,
-        latitude,
-        longitude
-      }));
+      if (latitude && longitude) {
+        localStorage.setItem(`checkIn_${user.id}_${todayStr}`, JSON.stringify({
+          checkInTime: checkInTimeStr,
+          latitude,
+          longitude
+        }));
+      }
 
-      const locationName = await fetchLocationName(latitude, longitude);
       const res = await axios.post('/api/attendance/check-in', { 
         employeeId: user.id,
         latitude,
@@ -284,41 +302,32 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         locationName
       });
 
-      // Wait implicitly by using await for route start
-      try {
-         await axios.post('/api/location/start', {
-            employeeId: user.id, latitude, longitude, city: locationName
-         });
-         
-         // Start Native Capacitor Tracking
-         activeLocationTracker = new LocationTracker(user.id);
-         await activeLocationTracker.startTracking();
-      } catch (trackErr) {
-         console.error("Failed to start tracking", trackErr);
+      if (latitude && longitude) {
+        try {
+           await axios.post('/api/location/start', {
+              employeeId: user.id, latitude, longitude, city: locationName
+           });
+           
+           activeLocationTracker = new LocationTracker(user.id);
+           await activeLocationTracker.startTracking();
+        } catch (trackErr) {
+           console.error("Failed to start tracking", trackErr);
+        }
       }
 
-      // Update todayRecord directly for instant UI update
       setTodayRecord(res.data);
       localStorage.setItem('isCheckedIn', 'true');
       
-      // Re-fetch global state to ensure history table is updated
       if (refreshRecords) refreshRecords();
       
-      // Auto-scroll to work details section after check-in
       setTimeout(() => {
         const el = document.getElementById('work-details-section');
         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 500);
 
     } catch (err) {
-      console.error("Check-in error:", err);
-      if (err.message?.includes('accuracy') || err.message?.includes('timeout') || err.code === 2 || err.code === 3) {
-         alert('GPS ERROR: Could not get an accurate location within the time limit. Please move to an open area with a clear sky view and try again. (Accuracy required: < 50m)');
-      } else if (err.code === 1) {
-         alert('PERMISSION ERROR: Location access is required. Please enable location permissions and Precise Location in your browser settings.');
-      } else {
-         alert(err.response?.data?.message || 'Failed to check-in. Ensure GPS is ON.');
-      }
+      console.error("Check-in API error:", err);
+      alert(err.response?.data?.message || 'Failed to check-in. Please check your connection.');
     } finally {
       setActionLoading(false);
     }
@@ -329,16 +338,22 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
 
     let finalLat = null;
     let finalLng = null;
+    let locationName = 'Unknown Location (GPS Failed)';
     
     try {
       const position = await getExactLocation();
       finalLat = position.coords.latitude;
       finalLng = position.coords.longitude;
+      locationName = await fetchLocationName(finalLat, finalLng);
     } catch (e) {
       console.error("GPS lock failed on checkout:", e);
-      alert('CHECKOUT FAILED: A fresh high-accuracy GPS lock is required to check out. Please move to an open area with a better signal and try again.');
-      setActionLoading(false);
-      return; // Stop checkout if no fresh lock
+      if (e.message?.includes('accuracy') || e.message?.includes('timeout') || e.code === 2 || e.code === 3) {
+         alert('GPS WARNING: Could not get an accurate location. Checking out without location.');
+      } else if (e.code === 1 || e.message?.includes('denied')) {
+         alert('PERMISSION WARNING: Location access is denied. Checking out without location.');
+      } else {
+         alert('Failed to get location. Checking out without location.');
+      }
     }
 
     const checkOutTimeDate = getSyncedTime();
@@ -372,10 +387,10 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
     });
 
     try {
-      let locationName = '';
-      if (finalLat && finalLng) {
+      if (!locationName && finalLat && finalLng) {
         locationName = await fetchLocationName(finalLat, finalLng);
       }
+
       const res = await axios.post('/api/attendance/check-out', { 
         employeeId: user.id,
         latitude: finalLat,

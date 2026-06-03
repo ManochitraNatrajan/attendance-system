@@ -2,7 +2,7 @@ import { useState, useEffect, memo } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { format } from 'date-fns';
-import { Users, UserCheck, UserX, Clock, X } from 'lucide-react';
+import { Users, UserCheck, UserX, Clock, X, Download } from 'lucide-react';
 
 import { MapPin } from 'lucide-react';
 
@@ -13,7 +13,9 @@ const Dashboard = memo(function Dashboard({ stats, refreshStats, employeeList = 
   const user = JSON.parse(localStorage.getItem('user'));
   const [showLiveMap, setShowLiveMap] = useState(false);
   const [activePopup, setActivePopup] = useState(null); // 'present' or 'absent'
-
+  const [isDownloadingApp, setIsDownloadingApp] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
+  const [downloadSuccess, setDownloadSuccess] = useState('');
   useEffect(() => {
     // Silently refresh stats in the background on mount
     if (refreshStats) refreshStats();
@@ -28,11 +30,56 @@ const Dashboard = memo(function Dashboard({ stats, refreshStats, employeeList = 
     }
   };
 
+  const handleDownloadApp = async () => {
+    setIsDownloadingApp(true);
+    setDownloadError('');
+    setDownloadSuccess('');
+    try {
+      const res = await axios.get('/api/config/apk-url');
+      if (res.data && res.data.url) {
+        setDownloadSuccess('Download starting shortly...');
+        window.open(res.data.url, '_blank');
+        setTimeout(() => setDownloadSuccess(''), 5000);
+      } else {
+        setDownloadError('App download link is currently unavailable.');
+        setTimeout(() => setDownloadError(''), 5000);
+      }
+    } catch (err) {
+      console.error('Download app error:', err);
+      setDownloadError('Failed to fetch download link. Please try again.');
+      setTimeout(() => setDownloadError(''), 5000);
+    } finally {
+      setIsDownloadingApp(false);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full animate-in fade-in slide-in-from-bottom-4 duration-300 ease-in-out">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 text-left m-0">Dashboard</h1>
-        <p className="text-gray-500 mt-1 text-left">Overview of today's attendance metrics</p>
+      {downloadError && (
+        <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-lg border border-red-200 text-sm animate-in fade-in zoom-in duration-200">
+          {downloadError}
+        </div>
+      )}
+      {downloadSuccess && (
+        <div className="mb-4 p-3 bg-green-50 text-green-600 rounded-lg border border-green-200 text-sm animate-in fade-in zoom-in duration-200">
+          {downloadSuccess}
+        </div>
+      )}
+      <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 text-left m-0">Dashboard</h1>
+          <p className="text-gray-500 mt-1 text-left">Overview of today's attendance metrics</p>
+        </div>
+        <div>
+          <button 
+            onClick={handleDownloadApp} 
+            disabled={isDownloadingApp}
+            className={`px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-medium text-sm flex items-center gap-2 shadow-sm ${isDownloadingApp ? 'opacity-70 cursor-not-allowed' : ''}`}
+          >
+            <Download className={`w-4 h-4 ${isDownloadingApp ? 'animate-bounce' : ''}`} />
+            {isDownloadingApp ? 'Fetching Link...' : 'Download App'}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">

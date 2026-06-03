@@ -31,7 +31,7 @@ export default function Login() {
     setError('');
 
     try {
-      const dbResponse = await axios.post('/api/login', { contact, password });
+      const dbResponse = await axios.post('/api/login', { contact, password }, { timeout: 10000 });
       if (dbResponse.data.success) {
         const u = dbResponse.data.user;
         if (!u.name || !u.role || !u.id) {
@@ -50,7 +50,16 @@ export default function Login() {
       }
     } catch (err) {
       console.error("Login attempt failed:", err);
-      const msg = err.response?.data?.message || 'Failed to connect to server';
+      let msg = 'Failed to connect to server';
+      if (err.code === 'ECONNABORTED') {
+         msg = 'Server took too long to respond. Please try again.';
+      } else if (!err.response) {
+         msg = 'Network error. Please check your connection and try again.';
+      } else if (err.response.status === 503) {
+         msg = 'Database is currently reconnecting. Please wait a moment and try again.';
+      } else {
+         msg = err.response?.data?.message || msg;
+      }
       setError(msg);
     } finally {
       setLoading(false);

@@ -150,6 +150,8 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
+let isServerListening = false;
+
 const connectWithRetry = async () => {
   const options = {
     serverSelectionTimeoutMS: 5000,
@@ -162,11 +164,16 @@ const connectWithRetry = async () => {
   try {
     await mongoose.connect(MONGODB_URI, options);
     console.log(' [Database] SUCCESS: Connected to MongoDB Atlas');
-    server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
+    if (!isServerListening) {
+      server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+      isServerListening = true;
+    }
   } catch (err) {
     console.error(' [Database] FAILURE: Connection error. Retrying in 5 seconds...', err.message);
+    if (!isServerListening) {
+      server.listen(PORT, () => console.log(`Server running on port ${PORT} (Database pending)`));
+      isServerListening = true;
+    }
     setTimeout(connectWithRetry, 5000);
   }
 };
@@ -435,6 +442,11 @@ app.get('/api/time', (req, res) => {
   res.json({ serverTime: Date.now() });
 });
 
+app.get('/api/config/apk-url', (req, res) => {
+  const apkUrl = process.env.APK_DOWNLOAD_URL || 'https://raw.githubusercontent.com/user/repo/main/app-release.apk';
+  res.json({ url: apkUrl });
+});
+
 app.get('/api/health', (req, res) => {
   const isConnected = mongoose.connection.readyState === 1;
   console.log(`[Health Check] DB ReadyState: ${mongoose.connection.readyState} (${isConnected ? 'online' : 'offline'})`);
@@ -447,7 +459,10 @@ app.post('/api/login', async (req, res) => {
     
     // Diagnostic logging for login issues
     const isConn = mongoose.connection.readyState === 1;
-    if (!isConn) console.error("LOGIN FAILED: Database not connected!");
+    if (!isConn) {
+       console.error("LOGIN FAILED: Database not connected!");
+       return res.status(503).json({ success: false, message: 'Database disconnected. Please wait and try again.' });
+    }
 
     const user = await Employee.findOne({ contact }).lean();
     
@@ -582,18 +597,42 @@ app.get('/api/attendance/available-months', async (req, res) => {
     // Get unique monthYears
     const monthYears = await Attendance.distinct('monthYear', query);
     
-    // Filter out null/undefined and sort descending
+    // Find the oldest month from records
+    let oldestDate = new Date();
     const validMonths = monthYears.filter(m => m);
-    validMonths.sort((a, b) => {
-      return new Date(b) - new Date(a);
-    });
+    if (validMonths.length > 0) {
+       // 'monthYear' is usually something like 'March 2024' or '2024-03'
+       // Wait, earlier I saw: const ym = ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}; return { display: ym, value: value }
+       // Wait, in server.js: const d = new Date(ym);
+       // So monthYear strings are parseable by Date constructor.
+       validMonths.forEach(m => {
+          const d = new Date(m);
+          if (d < oldestDate) oldestDate = d;
+       });
+    }
+
+    const now = new Date();
+    let currentYear = now.getFullYear();
+    let currentMonth = now.getMonth() + 1; // 1-12
     
-    // Format to frontend-friendly structure
-    const formattedMonths = validMonths.map(ym => {
-       const d = new Date(ym);
-       const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-       return { display: ym, value: value };
-    });
+    let oldestYear = oldestDate.getFullYear();
+    let oldestMonth = oldestDate.getMonth() + 1;
+
+    const formattedMonths = [];
+    
+    // Generate continuously from current month back to oldest month
+    while (currentYear > oldestYear || (currentYear === oldestYear && currentMonth >= oldestMonth)) {
+      const d = new Date(currentYear, currentMonth - 1, 1);
+      const display = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      const value = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+      formattedMonths.push({ display, value });
+      
+      currentMonth--;
+      if (currentMonth === 0) {
+        currentMonth = 12;
+        currentYear--;
+      }
+    }
     
     res.json(formattedMonths);
   } catch (err) {
@@ -1694,7 +1733,14 @@ if (fs.existsSync(distPath)) {
   // Catch-all ONLY if dist exists
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send('Index file missing. Build the frontend first.');
+      }
+    } else {
+      res.status(404).json({ message: 'API Route Not Found' });
     }
   });
 } else {
@@ -1703,4 +1749,3 @@ if (fs.existsSync(distPath)) {
     res.json({ message: "Sri Krishna Dairy API is running. (Frontend not served from here)" });
   });
 }
-
