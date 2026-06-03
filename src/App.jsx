@@ -32,7 +32,7 @@ function App() {
   const [attendanceRecords, setAttendanceRecords] = useState(null);
   const [employeeList, setEmployeeList] = useState(null);
   const [todayRecords, setTodayRecords] = useState(null);
-  const [timerDone, setTimerDone] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(window.deferredPrompt || null);
 
   const fetchGlobalData = async () => {
     try {
@@ -41,6 +41,7 @@ function App() {
         setAttendanceRecords([]);
         setEmployeeList([]);
         setTodayRecords([]);
+        setAppLoading(false);
         return;
       }
       const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
@@ -50,13 +51,12 @@ function App() {
         ? '/api/attendance?limit=20'
         : `/api/attendance?employeeId=${user.id}&limit=20`;
 
-      // Fetch dashboard critical stats first, delay heavy records list
-      const [empRes, attStatsRes] = await Promise.all([
+      // Fetch all required data concurrently
+      const [empRes, attStatsRes, attRecRes] = await Promise.all([
         axios.get('/api/employees'),
-        axios.get(`/api/attendance?date=${todayStr}`)
+        axios.get(`/api/attendance?date=${todayStr}`),
+        axios.get(attEndpoint)
       ]);
-      
-      const attRecRes = await axios.get(attEndpoint);
 
       setDashboardStats({
         total: empRes.data.length,
@@ -79,18 +79,14 @@ function App() {
       setAttendanceRecords([]);
       setEmployeeList([]);
       setTodayRecords([]);
+    } finally {
+      setAppLoading(false);
     }
   };
 
   useEffect(() => {
     initTimeSync();
     fetchGlobalData();
-    
-    // 1.5s branding duration
-    const timer = setTimeout(() => setTimerDone(true), 1500);
-    // 5s fail-safe timeout
-    const failSafe = setTimeout(() => setAppLoading(false), 5000);
-
     // Keep-alive ping for Render free tier (every 14 mins)
     const pingServer = () => {
       if (document.visibilityState === 'visible') {
@@ -101,20 +97,25 @@ function App() {
     pingServer();
     const interval = setInterval(pingServer, 14 * 60 * 1000);
     
+    // Check if prompt was already captured by index.html script
+    if (window.deferredPrompt) {
+      setDeferredPrompt(window.deferredPrompt);
+    }
+
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      window.deferredPrompt = e;
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    
     return () => {
-      clearTimeout(timer);
-      clearTimeout(failSafe);
       clearInterval(interval);
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     };
   }, []);
 
-  useEffect(() => {
-    // Both branding time and ALL data must be ready
-    if (timerDone && dashboardStats !== null && attendanceRecords !== null && employeeList !== null && todayRecords !== null) {
-      console.log('All data ready, transitioning to dashboard...');
-      setAppLoading(false);
-    }
-  }, [timerDone, dashboardStats, attendanceRecords, employeeList, todayRecords]);
+
 
   if (appLoading) return <LoadingScreen />;
 
@@ -125,7 +126,7 @@ function App() {
           <Suspense fallback={<LoadingScreen />}>
             <Routes>
               <Route path="/login" element={!user ? <Login /> : <Navigate to="/" />} />
-              <Route path="/" element={user ? <Dashboard stats={dashboardStats} refreshStats={fetchGlobalData} employeeList={employeeList} todayRecords={todayRecords} /> : <Navigate to="/login" />} />
+              <Route path="/" element={user ? <Dashboard stats={dashboardStats} refreshStats={fetchGlobalData} employeeList={employeeList} todayRecords={todayRecords} deferredPrompt={deferredPrompt} setDeferredPrompt={setDeferredPrompt} /> : <Navigate to="/login" />} />
               <Route path="/employees" element={user ? <Employees employees={employeeList} refreshEmployees={fetchGlobalData} /> : <Navigate to="/login" />} />
               <Route path="/attendance" element={user ? <Attendance records={attendanceRecords} refreshRecords={fetchGlobalData} /> : <Navigate to="/login" />} />
             </Routes>
