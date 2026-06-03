@@ -27,8 +27,8 @@ const Dashboard = memo(function Dashboard({ stats, refreshStats, employeeList = 
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, [refreshStats]);
 
-  // Use empty defaults if still null for some reason (fail-safe)
-  const currentStats = stats || { total: 0, present: 0, absent: 0 };
+  // Use empty defaults if still null or empty for some reason (fail-safe)
+  const currentStats = stats && Object.keys(stats).length > 0 ? stats : { total: 0, present: 0, absent: 0 };
 
   const handleStatClick = (type) => {
     if (user?.role === 'Admin') {
