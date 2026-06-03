@@ -16,7 +16,7 @@ export default defineConfig({
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg', 'logo.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'Sri Krishna Milk Dairy',
-        short_name: 'SK Dairy',
+        short_name: 'Krishna Dairy',
         start_url: '/',
         display: 'standalone',
         background_color: '#ffffff',

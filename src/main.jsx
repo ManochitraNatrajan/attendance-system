@@ -4,9 +4,11 @@ import axios from 'axios'
 import './index.css'
 import App from './App.jsx'
 
-// Use relative URL so the proxy (Vite locally, Netlify in prod) handles the request
-// Ignore .env local URLs if building for production
-const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || '');
+// Guarantee the production app ALWAYS points to Render, regardless of local .env files
+const API_URL = import.meta.env.PROD 
+  ? 'https://attendance-system-4-blz0.onrender.com' 
+  : (import.meta.env.VITE_API_URL || 'https://attendance-system-4-blz0.onrender.com');
+
 axios.defaults.baseURL = API_URL;
 console.log(`[Config] API Base URL set to: ${API_URL || 'Relative (Proxy)'}`);
 class ErrorBoundary extends React.Component {

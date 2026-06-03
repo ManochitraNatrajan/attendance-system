@@ -31,7 +31,8 @@ export default function Login() {
     setError('');
 
     try {
-      const dbResponse = await axios.post('/api/login', { contact, password }, { timeout: 10000 });
+      // Free Render servers can take up to 50 seconds to wake up from sleep
+      const dbResponse = await axios.post('/api/login', { contact, password }, { timeout: 60000 });
       if (dbResponse.data.success) {
         const u = dbResponse.data.user;
         if (!u.name || !u.role || !u.id) {
@@ -52,11 +53,11 @@ export default function Login() {
       console.error("Login attempt failed:", err);
       let msg = 'Failed to connect to server';
       if (err.code === 'ECONNABORTED') {
-         msg = 'Server took too long to respond. Please try again.';
+         msg = 'Server is waking up (takes ~50s). Please try again.';
       } else if (!err.response) {
          msg = 'Network error. Please check your connection and try again.';
-      } else if (err.response.status === 503) {
-         msg = 'Database is currently reconnecting. Please wait a moment and try again.';
+      } else if (err.response.status === 503 || err.response.status === 502 || err.response.status === 504) {
+         msg = 'Server is currently waking up from sleep. Please wait a moment and click login again.';
       } else {
          msg = err.response?.data?.message || msg;
       }

@@ -56,8 +56,8 @@ const Dashboard = memo(function Dashboard({ stats, refreshStats, employeeList = 
 
       <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 text-left m-0">Dashboard</h1>
-          <p className="text-gray-500 mt-1 text-left">Overview of today's attendance metrics</p>
+          <h1 className="text-3xl font-bold text-gray-900 text-left m-0">Welcome, {user?.name || 'User'}!</h1>
+          <p className="text-gray-500 mt-1 text-left">Here is your dashboard overview.</p>
         </div>
         {!isStandalone && (
           <div>
