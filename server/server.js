@@ -243,7 +243,7 @@ cron.schedule('59 23 * * *', async () => {
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
     
-    const unclosedAttendances = await Attendance.find({ date: today, checkOut: null });
+    const unclosedAttendances = await Attendance.find({ checkOut: { $in: [null, '-'] }, checkIn: { $nin: [null, '-'] } });
     
     for (const record of unclosedAttendances) {
       if (record.isCheckedOut) continue;
@@ -258,13 +258,13 @@ cron.schedule('59 23 * * *', async () => {
       
       if (record.routeTracking && !record.routeTracking.endedAt) {
           const lastLoc = record.routeTracking.locations.length > 0 ? record.routeTracking.locations[record.routeTracking.locations.length - 1] : null;
-          record.routeTracking.endedAt = new Date(`${today}T23:59:00+05:30`);
+          record.routeTracking.endedAt = new Date(`${record.date}T23:59:00+05:30`);
           if (lastLoc) {
             record.routeTracking.endLocation = {
                latitude: lastLoc.latitude,
                longitude: lastLoc.longitude,
                city: lastLoc.city || '',
-               timestamp: new Date(`${today}T23:59:00+05:30`)
+               timestamp: new Date(`${record.date}T23:59:00+05:30`)
             };
             record.routeTracking.locations.push(record.routeTracking.endLocation);
           }

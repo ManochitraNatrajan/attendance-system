@@ -387,8 +387,8 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
       checkInTime: todayRecord?.checkIn || "-",
       checkOutTime: format(checkOutTimeDate, 'hh:mm a'),
       workingHours: diffHrs.toFixed(2),
-      distance: (Number(travelExpenseAmount) || 0) / 2.5,
-      travelExpense: Number(travelExpenseAmount) || 0,
+      distance: Number(travelDistance) || 0,
+      travelExpense: (Number(travelDistance) || 0) * 2.5,
       foodExpense: foodExpenseAmount || 0,
       status,
       workDetails: [...workDetails]
@@ -405,7 +405,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         longitude: finalLng,
         status: status,
         locationName,
-        distanceTraveled: (Number(travelExpenseAmount) || 0) / 2.5,
+        distanceTraveled: Number(travelDistance) || 0,
         foodExpense: Number(foodExpenseAmount) || 0,
         workDetails: workDetails
       });
@@ -916,7 +916,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                            </div>
                         </a>
                      )}
-                     {record.currentLocation && !record.isCheckedOut && !record.checkOut && (
+                     {record.currentLocation && !record.isCheckedOut && (!record.checkOut || record.checkOut === '-') && (
                         <div className="flex items-center gap-3 p-2 rounded-lg bg-red-50 border border-red-100 animate-pulse">
                            <div className="bg-red-500 p-2 rounded-lg"><Activity className="w-4 h-4 text-white"/></div>
                            <div className="text-left"><span className="text-xs font-black text-red-600 uppercase tracking-widest">Employee is Live</span></div>
@@ -985,7 +985,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                  {user.role === 'Admin' && <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>}
+                  {user.role === 'Admin' && <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[150px] md:min-w-[200px]">Employee</th>}
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Check In</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Check Out</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
@@ -1030,7 +1030,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                              </a>
                            </div>
                         )}
-                        {record.currentLocation && !record.isCheckedOut && !record.checkOut ? <a href={`https://www.google.com/maps?q=${record.currentLocation.lat},${record.currentLocation.lng}`} target="_blank" rel="noreferrer" className="text-red-500 hover:text-red-700 font-semibold flex items-center gap-1 animate-pulse"><MapPin className="w-4 h-4" /> LIVE</a> : null}
+                        {record.currentLocation && !record.isCheckedOut && (!record.checkOut || record.checkOut === '-') ? <a href={`https://www.google.com/maps?q=${record.currentLocation.lat},${record.currentLocation.lng}`} target="_blank" rel="noreferrer" className="text-red-500 hover:text-red-700 font-semibold flex items-center gap-1 animate-pulse"><MapPin className="w-4 h-4" /> LIVE</a> : null}
                         
                         {record.checkInLocation && (
                            <div className="flex flex-col gap-2 mt-1.5">
