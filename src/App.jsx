@@ -10,6 +10,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Login = lazy(() => import('./pages/Login'));
 const Employees = lazy(() => import('./pages/Employees'));
 const Attendance = lazy(() => import('./pages/Attendance'));
+const Records = lazy(() => import('./pages/Records'));
 
 function App() {
   let user = null;
@@ -129,6 +130,7 @@ function App() {
               <Route path="/" element={user ? <Dashboard stats={dashboardStats} refreshStats={fetchGlobalData} employeeList={employeeList} todayRecords={todayRecords} deferredPrompt={deferredPrompt} setDeferredPrompt={setDeferredPrompt} /> : <Navigate to="/login" />} />
               <Route path="/employees" element={user ? <Employees employees={employeeList} refreshEmployees={fetchGlobalData} /> : <Navigate to="/login" />} />
               <Route path="/attendance" element={user ? <Attendance records={attendanceRecords} refreshRecords={fetchGlobalData} /> : <Navigate to="/login" />} />
+              <Route path="/records" element={user && user.role === 'Admin' ? <Records employees={employeeList} /> : <Navigate to="/" />} />
             </Routes>
           </Suspense>
         </div>

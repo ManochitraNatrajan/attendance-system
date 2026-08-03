@@ -641,6 +641,125 @@ app.get('/api/attendance/available-months', async (req, res) => {
   }
 });
 
+// === Admin Records API ===
+app.get('/api/admin/records/daily', async (req, res) => {
+  try {
+    const { adminId, date, startDate, endDate, monthYear, searchName, employeeId, page, limit } = req.query;
+    
+    // 1. Verify Admin
+    if (!adminId) return res.status(401).json({ message: 'Unauthorized' });
+    const adminUser = await Employee.findById(adminId).lean();
+    if (!adminUser || adminUser.role !== 'Admin') {
+      return res.status(403).json({ message: 'Forbidden: Admin access required' });
+    }
+
+    // 2. Build Query
+    let query = {};
+    if (date) {
+      query.date = date;
+    } else if (startDate && endDate) {
+      query.date = { $gte: startDate, $lte: endDate };
+    } else if (monthYear) {
+      query.monthYear = monthYear;
+    } else {
+      // Prevent massive full-table scans if no date filter is provided
+      return res.status(400).json({ message: 'A date filter (date, startDate/endDate, or monthYear) is required.' });
+    }
+
+    if (employeeId) {
+      query.employeeId = employeeId;
+    }
+    
+    // Pagination (default large so Excel gets all if not specified, or we can just paginate UI)
+    const pg = parseInt(page) || 1;
+    const lmt = parseInt(limit) || 10000;
+    
+    // Execute query
+    let records = await Attendance.find(query).populate('employeeId').select('-locationHistory -routeTracking').sort({ date: -1, checkIn: -1 }).lean();
+    
+    // If searchName is provided, filter in memory since name is on populated Employee
+    if (searchName) {
+      const lowerSearch = searchName.toLowerCase();
+      records = records.filter(r => r.employeeId && r.employeeId.name && r.employeeId.name.toLowerCase().includes(lowerSearch));
+    }
+
+    // Apply pagination in memory if we had to filter by name, else we could do it in DB. For simplicity and robustness with name filter, do it here.
+    const totalRecords = records.length;
+    const paginatedRecords = records.slice((pg - 1) * lmt, pg * lmt);
+
+    // Format records
+    const enrichedRecords = paginatedRecords.map(r => ({
+      ...r,
+      id: r._id.toString(),
+      employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
+      role: r.employeeId ? r.employeeId.role : 'Unknown',
+      employeeId: r.employeeId ? r.employeeId._id.toString() : null
+    })).filter(r => r.employeeName !== 'Unknown' && r.employeeId !== null);
+    
+    // For daily grouped view, it's often easier to return the raw list and group on frontend, 
+    // or just return the paginated enriched records. We'll return the list and frontend groups it by date if needed, 
+    // but the requirement says "Display a list of all attendance dates... When Admin opens a date, show Total, Present, Absent".
+    // We will just return all matching records and let frontend do the grouping if limit is high, OR we group it here.
+    // Given the prompt: "Filters should work before exporting Excel... Use server-side pagination if records are large."
+    // We will return `{ records: enrichedRecords, total: totalRecords }`
+    
+    res.json({ records: enrichedRecords, total: totalRecords });
+  } catch (err) {
+    console.error("Admin Daily Records Error:", err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/admin/records/employee', async (req, res) => {
+  try {
+    const { adminId, employeeId, startDate, endDate, monthYear, page, limit } = req.query;
+    
+    // 1. Verify Admin
+    if (!adminId) return res.status(401).json({ message: 'Unauthorized' });
+    const adminUser = await Employee.findById(adminId).lean();
+    if (!adminUser || adminUser.role !== 'Admin') {
+      return res.status(403).json({ message: 'Forbidden: Admin access required' });
+    }
+
+    // 2. Build Query
+    let query = {};
+    if (employeeId) {
+      query.employeeId = employeeId;
+    }
+    
+    if (startDate && endDate) {
+      query.date = { $gte: startDate, $lte: endDate };
+    } else if (monthYear) {
+      query.monthYear = monthYear;
+    }
+
+    const pg = parseInt(page) || 1;
+    const lmt = parseInt(limit) || 10000;
+
+    const totalRecords = await Attendance.countDocuments(query);
+    const records = await Attendance.find(query)
+      .populate('employeeId')
+      .select('-locationHistory -routeTracking')
+      .sort({ date: -1, checkIn: -1 })
+      .skip((pg - 1) * lmt)
+      .limit(lmt)
+      .lean();
+
+    const enrichedRecords = records.map(r => ({
+      ...r,
+      id: r._id.toString(),
+      employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
+      role: r.employeeId ? r.employeeId.role : 'Unknown',
+      employeeId: r.employeeId ? r.employeeId._id.toString() : null
+    })).filter(r => r.employeeName !== 'Unknown' && r.employeeId !== null);
+
+    res.json({ records: enrichedRecords, total: totalRecords });
+  } catch (err) {
+    console.error("Admin Employee Records Error:", err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // === Attendance API ===
 app.get('/api/attendance', async (req, res) => {
   try {

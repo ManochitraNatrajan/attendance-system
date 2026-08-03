@@ -1,5 +1,5 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Droplets, Users, CheckSquare, BarChart3, LogOut, LayoutDashboard } from 'lucide-react';
+import { Droplets, Users, CheckSquare, BarChart3, LogOut, LayoutDashboard, Folder } from 'lucide-react';
 import clsx from 'clsx';
 
 export default function Navbar() {
@@ -22,6 +22,7 @@ export default function Navbar() {
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Attendance', path: '/attendance', icon: CheckSquare },
     { name: 'Employees', path: '/employees', icon: Users, adminOnly: true },
+    { name: 'Records', path: '/records', icon: Folder, adminOnly: true },
   ];
 
   return (
@@ -31,9 +32,9 @@ export default function Navbar() {
           <div className="flex">
             <div className="flex-shrink-0 flex items-center gap-2">
               <img src="/logo.png" alt="Logo" className="h-8 sm:h-10 w-auto object-contain drop-shadow-sm" />
-              <span className="font-bold text-base sm:text-xl text-gray-900 tracking-tight">Sri Krishna Milk Dairy</span>
+              <span className="font-bold text-lg lg:text-xl text-gray-900 tracking-tight hidden lg:block">Sri Krishna Milk Dairy</span>
             </div>
-            <div className="hidden sm:ml-6 sm:flex sm:space-x-4 h-full">
+            <div className="hidden sm:ml-2 md:ml-6 sm:flex sm:space-x-1 md:space-x-4 h-full">
               {navItems.map((item) => {
                 if (item.adminOnly && user?.role !== 'Admin') return null;
                 const active = location.pathname === item.path;
@@ -42,7 +43,7 @@ export default function Navbar() {
                     key={item.name}
                     to={item.path}
                     className={clsx(
-                      "inline-flex items-center px-3 gap-2 h-full text-sm font-medium border-b-2 transition-colors",
+                      "inline-flex items-center px-2 md:px-3 gap-1 md:gap-2 h-full text-xs md:text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
                       active ? "border-[var(--accent)] text-[var(--accent)]" : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700"
                     )}
                   >
@@ -53,11 +54,10 @@ export default function Navbar() {
               })}
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="text-sm hidden sm:block">
-              <span className="text-gray-500">Welcome, </span>
-              <span className="font-medium text-gray-900">{user?.name}</span>
-              <span className="ml-2 px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-xs">{user?.role}</span>
+          <div className="flex items-center gap-2 lg:gap-4 shrink-0 pl-2">
+            <div className="hidden md:flex flex-col items-end justify-center pr-3 border-r border-gray-100 h-10">
+              <span className="font-semibold text-gray-900 text-sm leading-none truncate max-w-[120px]">{user?.name}</span>
+              <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 text-[10px] font-bold leading-none mt-1 tracking-wide uppercase">{user?.role}</span>
             </div>
             <button
               onClick={handleLogout}
