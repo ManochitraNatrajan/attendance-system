@@ -76,10 +76,10 @@ function App() {
 
     } catch (error) {
       console.error('Global data fetch failure:', error);
-      setDashboardStats({});
-      setAttendanceRecords([]);
-      setEmployeeList([]);
-      setTodayRecords([]);
+      setDashboardStats(prev => prev || {});
+      setAttendanceRecords(prev => prev || []);
+      setEmployeeList(prev => prev || []);
+      setTodayRecords(prev => prev || []);
     } finally {
       setAppLoading(false);
     }

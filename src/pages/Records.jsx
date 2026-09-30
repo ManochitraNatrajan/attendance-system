@@ -148,7 +148,7 @@ function DailyRecords({ user }) {
     const data = dateRecords.map(r => {
       const workingHours = calculateHours(r.checkIn, r.checkOut, r.date);
       const otherExp = 0; // Not explicitly defined in schema, keep 0 or compute if exists
-      const totalExp = (r.travelExpense || 0) + (r.foodExpense || 0) + otherExp;
+      const totalExp = (r.travelExpense || 0) + (r.foodExpense || 0) + (r.feedAmount || 0) + otherExp;
       
       return {
         'Date': r.date,
@@ -161,6 +161,8 @@ function DailyRecords({ user }) {
         'Travel KM': r.distanceTraveled || 0,
         'Travel Expense': r.travelExpense || 0,
         'Food Expense': r.foodExpense || 0,
+        'Feed Qty': r.feedQuantity || 0,
+        'Feed Amount': r.feedAmount || 0,
         'Other Expense': otherExp,
         'Total Expense': totalExp,
         'Attendance Status': r.status || '-',
@@ -284,6 +286,7 @@ function DailyRecords({ user }) {
                           <th className="px-4 py-3 font-medium">Travel (KM)</th>
                           <th className="px-4 py-3 font-medium">Travel Exp</th>
                           <th className="px-4 py-3 font-medium">Food Exp</th>
+                          <th className="px-4 py-3 font-medium">Feed Amt</th>
                           <th className="px-4 py-3 font-medium">Total Exp</th>
                           <th className="px-4 py-3 font-medium">Status</th>
                           <th className="px-4 py-3 font-medium">Location</th>
@@ -292,7 +295,7 @@ function DailyRecords({ user }) {
                       <tbody className="divide-y divide-gray-100">
                         {group.data.map(r => {
                           const hrs = calculateHours(r.checkIn, r.checkOut, r.date);
-                          const totExp = (r.travelExpense || 0) + (r.foodExpense || 0);
+                          const totExp = (r.travelExpense || 0) + (r.foodExpense || 0) + (r.feedAmount || 0);
                           return (
                             <tr key={r.id} className="hover:bg-gray-50/50">
                               <td className="px-4 py-3 font-medium text-gray-900">{r.employeeName}</td>
@@ -304,6 +307,7 @@ function DailyRecords({ user }) {
                               <td className="px-4 py-3 text-gray-600">{r.distanceTraveled?.toFixed(2) || '0.00'}</td>
                               <td className="px-4 py-3 text-gray-600">₹{r.travelExpense || 0}</td>
                               <td className="px-4 py-3 text-gray-600">₹{r.foodExpense || 0}</td>
+                              <td className="px-4 py-3 text-emerald-600 font-medium">₹{r.feedAmount || 0}</td>
                               <td className="px-4 py-3 text-indigo-600 font-medium">₹{totExp}</td>
                               <td className="px-4 py-3">
                                 <span className={clsx(
@@ -404,7 +408,7 @@ function EmployeeRecords({ user, employees }) {
     const data = records.map(r => {
       const workingHours = calculateHours(r.checkIn, r.checkOut, r.date);
       const otherExp = 0; 
-      const totalExp = (r.travelExpense || 0) + (r.foodExpense || 0) + otherExp;
+      const totalExp = (r.travelExpense || 0) + (r.foodExpense || 0) + (r.feedAmount || 0) + otherExp;
       
       return {
         'Date': r.date,
@@ -415,9 +419,11 @@ function EmployeeRecords({ user, employees }) {
         'Travel KM': r.distanceTraveled || 0,
         'Travel Expense': r.travelExpense || 0,
         'Food Expense': r.foodExpense || 0,
+        'Feed Qty': r.feedQuantity || 0,
+        'Feed Amount': r.feedAmount || 0,
         'Other Expense': otherExp,
         'Total Expense': totalExp,
-        'Status': r.status || '-',
+        'Attendance Status': r.status || '-',
         'Location': r.checkInLocationName || '-'
       };
     });
@@ -515,6 +521,7 @@ function EmployeeRecords({ user, employees }) {
                   <th className="px-6 py-4 font-medium">Travel (KM)</th>
                   <th className="px-6 py-4 font-medium">Travel Exp</th>
                   <th className="px-6 py-4 font-medium">Food Exp</th>
+                  <th className="px-6 py-4 font-medium">Feed Amt</th>
                   <th className="px-6 py-4 font-medium">Total Exp</th>
                   <th className="px-6 py-4 font-medium">Status</th>
                   <th className="px-6 py-4 font-medium">Location</th>
@@ -523,7 +530,7 @@ function EmployeeRecords({ user, employees }) {
               <tbody className="divide-y divide-gray-100">
                 {records.map(r => {
                   const hrs = calculateHours(r.checkIn, r.checkOut, r.date);
-                  const totExp = (r.travelExpense || 0) + (r.foodExpense || 0);
+                  const totExp = (r.travelExpense || 0) + (r.foodExpense || 0) + (r.feedAmount || 0);
                   return (
                     <tr key={r.id} className="hover:bg-gray-50/50">
                       <td className="px-6 py-4 font-medium text-gray-900">{format(parseISO(r.date), 'dd-MM-yyyy')}</td>
@@ -534,6 +541,7 @@ function EmployeeRecords({ user, employees }) {
                       <td className="px-6 py-4 text-gray-600">{r.distanceTraveled?.toFixed(2) || '0.00'}</td>
                       <td className="px-6 py-4 text-gray-600">₹{r.travelExpense || 0}</td>
                       <td className="px-6 py-4 text-gray-600">₹{r.foodExpense || 0}</td>
+                      <td className="px-6 py-4 text-emerald-600 font-medium">₹{r.feedAmount || 0}</td>
                       <td className="px-6 py-4 text-indigo-600 font-medium">₹{totExp}</td>
                       <td className="px-6 py-4">
                         <span className={clsx(

@@ -54,6 +54,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
   const [travelExpenseAmount, setTravelExpenseAmount] = useState('');
   const [travelDistance, setTravelDistance] = useState('');
   const [foodExpenseAmount, setFoodExpenseAmount] = useState('');
+  const [feedQuantity, setFeedQuantity] = useState('');
   const [savingDetails, setSavingDetails] = useState(false);
   const [viewingMapFor, setViewingMapFor] = useState(null);
   const [mapLoading, setMapLoading] = useState(false);
@@ -163,6 +164,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
       if (userTodayRecord) {
         setTravelDistance(userTodayRecord.distanceTraveled !== undefined ? userTodayRecord.distanceTraveled.toString() : '');
         setFoodExpenseAmount(userTodayRecord.foodExpense !== undefined ? userTodayRecord.foodExpense.toString() : '');
+        setFeedQuantity(userTodayRecord.feedQuantity !== undefined ? userTodayRecord.feedQuantity.toString() : '');
         
         // Set work details state from individual points
         const points = [];
@@ -188,6 +190,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         setTravelDistance('');
         setTravelExpenseAmount('');
         setFoodExpenseAmount('');
+        setFeedQuantity('');
       }
     }
   }, [globalRecords, user.id, todayStr, selectedMonth, availableMonths]);
@@ -390,6 +393,8 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
       distance: Number(travelDistance) || 0,
       travelExpense: (Number(travelDistance) || 0) * 2.5,
       foodExpense: foodExpenseAmount || 0,
+      feedQuantity: Number(feedQuantity) || 0,
+      feedAmount: (Number(feedQuantity) || 0) * 5,
       status,
       workDetails: [...workDetails]
     });
@@ -407,6 +412,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         locationName,
         distanceTraveled: Number(travelDistance) || 0,
         foodExpense: Number(foodExpenseAmount) || 0,
+        feedQuantity: Number(feedQuantity) || 0,
         workDetails: workDetails
       });
 
@@ -441,6 +447,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
       setSavingDetails(true);
       const distance = Number(travelDistance) || 0;
       const foodAmount = Number(foodExpenseAmount) || 0;
+      const feedQty = Number(feedQuantity) || 0;
 
       // Explicitly construct the 10-point payload to ensure consistency
       const pointsPayload = {};
@@ -452,6 +459,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
         employeeId: user.id,
         distanceTraveled: distance,
         foodExpense: foodAmount,
+        feedQuantity: feedQty,
         workDetails: workDetails, // Keep array for backward compatibility
         ...pointsPayload
       });
@@ -671,7 +679,7 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 p-5 bg-gradient-to-br from-gray-50 to-indigo-50/30 rounded-xl border border-gray-100 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 p-5 bg-gradient-to-br from-gray-50 to-indigo-50/30 rounded-xl border border-gray-100 mb-6">
             <div>
               <label className="text-sm font-bold text-gray-700 mb-2 block">Travel Distance (KM)</label>
               <input 
@@ -702,6 +710,25 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                 placeholder="e.g. 150" 
                 className="w-full border border-gray-200 bg-white rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed" 
               />
+            </div>
+            <div>
+              <label className="text-sm font-bold text-gray-700 mb-2 block">Feed Quantity</label>
+              <input 
+                type="number" 
+                min="0" 
+                step="1"
+                value={feedQuantity} 
+                onChange={e => setFeedQuantity(e.target.value)} 
+                disabled={todayRecord.isCheckedOut || todayRecord.checkOut}
+                placeholder="e.g. 1" 
+                className="w-full border border-gray-200 bg-white rounded-xl shadow-sm py-3 px-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed" 
+              />
+            </div>
+            <div>
+              <label className="text-sm font-bold text-gray-700 mb-2 block">Feed Amount (₹5/Feed)</label>
+              <div className="w-full border border-gray-200 bg-gray-50 rounded-xl shadow-sm py-3 px-4 text-emerald-700 font-bold">
+                ₹{(Number(feedQuantity) * 5).toFixed(2)}
+              </div>
             </div>
           </div>
           
@@ -752,6 +779,10 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
               <div className="flex flex-col text-sm bg-orange-50 px-4 py-2 rounded-lg border border-orange-200 shrink-0 snap-start">
                 <span className="text-orange-800">Food Expense</span>
                 <span className="font-bold text-orange-900">₹{sessionSummary.foodExpense}</span>
+              </div>
+              <div className="flex flex-col text-sm bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-200 shrink-0 snap-start">
+                <span className="text-emerald-800">Feed Amount</span>
+                <span className="font-bold text-emerald-900">₹{sessionSummary.feedAmount} ({sessionSummary.feedQuantity || 0} feed)</span>
               </div>
               <div className={`flex flex-col text-sm px-4 py-2 rounded-lg border font-bold justify-center items-center shrink-0 snap-start ${
                 sessionSummary.status === 'Present' ? 'bg-green-100 text-green-800 border-green-200' : 'bg-yellow-100 text-yellow-800 border-yellow-200'
@@ -937,6 +968,10 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                          <span className="text-[10px] font-black text-orange-400 uppercase">Food:</span>
                          <span className="text-xs font-extrabold text-orange-700">₹{record.foodExpense || 0}</span>
                       </div>
+                      <div className="bg-emerald-50 px-3 py-1.5 rounded-lg flex items-center gap-2 border border-emerald-100">
+                         <span className="text-[10px] font-black text-emerald-400 uppercase">Feed:</span>
+                         <span className="text-xs font-extrabold text-emerald-700">₹{record.feedAmount || 0} ({record.feedQuantity || 0})</span>
+                      </div>
                    </div>
                 </div>
 
@@ -1065,6 +1100,10 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
                         <div className="flex items-center gap-1.5 text-orange-700 font-extrabold bg-orange-50 px-2 py-1 rounded border border-orange-100 w-fit">
                             <span className="text-[10px] text-orange-500 uppercase">Food:</span>
                             <span>₹{record.foodExpense || 0}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-emerald-700 font-extrabold bg-emerald-50 px-2 py-1 rounded border border-emerald-100 w-fit">
+                            <span className="text-[10px] text-emerald-500 uppercase">Feed:</span>
+                            <span>₹{record.feedAmount || 0} ({record.feedQuantity || 0})</span>
                         </div>
                       </div>
                     </td>

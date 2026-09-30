@@ -3,7 +3,7 @@ import cors from 'cors';
 import compression from 'compression';
 import { format } from 'date-fns';
 import nodemailer from 'nodemailer';
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import PDFDocument from 'pdfkit';
 import mongoose from 'mongoose';
 import path from 'path';
@@ -13,8 +13,11 @@ import { Server } from 'socket.io';
 import cron from 'node-cron';
 
 const __filename = fileURLToPath(import.meta.url);
-
 const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, '.env') });
+dotenv.config({ path: path.join(__dirname, '../.env') });
+dotenv.config({ path: path.join(__dirname, '../.env.local') });
 
 // =======================
 // === MONGODB SCHEMAS ===
@@ -49,6 +52,8 @@ const attendanceSchema = new mongoose.Schema({
   distanceTraveled: { type: Number, default: 0 },
   travelExpense: { type: Number, default: 0 },
   foodExpense: { type: Number, default: 0 },
+  feedQuantity: { type: Number, default: 0 },
+  feedAmount: { type: Number, default: 0 },
   workPoint1: { type: String, default: '' },
   workPoint2: { type: String, default: '' },
   workPoint3: { type: String, default: '' },
@@ -105,6 +110,7 @@ const salaryHistorySchema = new mongoose.Schema({
   deductions: { type: Number, default: 0 },
   travelExpense: { type: Number, default: 0 },
   foodExpense: { type: Number, default: 0 },
+  feedAmount: { type: Number, default: 0 },
   netSalary: { type: Number, default: 0 },
   isPaid: { type: Boolean, default: false }
 }, { timestamps: true });
@@ -486,7 +492,10 @@ app.get('/api/employees', async (req, res) => {
     if (employeeCache.data && (now - employeeCache.lastFetched < CACHE_TTL)) {
       return res.json(employeeCache.data);
     }
-    const users = (await Employee.find({ $or: [{ status: 'active' }, { status: { $exists: false } }] }).lean()).map(u => ({ ...u, id: u._id.toString() }));
+    const users = (await Employee.find({ $or: [{ status: 'active' }, { status: { $exists: false } }] }).lean())
+      .map(u => ({ ...u, id: u._id.toString() }))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
+
     employeeCache.data = users;
     employeeCache.lastFetched = now;
     res.json(users);
@@ -587,6 +596,34 @@ app.delete('/api/employees/:id', async (req, res) => {
   }
 });
 
+const monthNamesMap = {
+  '01': 'January', '02': 'February', '03': 'March', '04': 'April',
+  '05': 'May', '06': 'June', '07': 'July', '08': 'August',
+  '09': 'September', '10': 'October', '11': 'November', '12': 'December'
+};
+
+function buildMonthYearFilter(monthYearStr) {
+  if (!monthYearStr) return null;
+  if (/^\d{4}-\d{2}$/.test(monthYearStr)) {
+    const [y, m] = monthYearStr.split('-');
+    const mName = monthNamesMap[m] || '';
+    return {
+      $or: [
+        { date: { $regex: `^${monthYearStr}` } },
+        { monthYear: monthYearStr },
+        { monthYear: { $regex: mName, $options: 'i' } }
+      ]
+    };
+  }
+  return {
+    $or: [
+      { monthYear: monthYearStr },
+      { monthYear: { $regex: monthYearStr, $options: 'i' } },
+      { date: { $regex: `^${monthYearStr}` } }
+    ]
+  };
+}
+
 // === Available Months API ===
 app.get('/api/attendance/available-months', async (req, res) => {
   try {
@@ -594,22 +631,9 @@ app.get('/api/attendance/available-months', async (req, res) => {
     let query = {};
     if (employeeId) query.employeeId = employeeId;
     
-    // Get unique monthYears
-    const monthYears = await Attendance.distinct('monthYear', query);
-    
-    // Find the oldest month from records
-    let oldestDate = new Date();
-    const validMonths = monthYears.filter(m => m);
-    if (validMonths.length > 0) {
-       // 'monthYear' is usually something like 'March 2024' or '2024-03'
-       // Wait, earlier I saw: const ym = ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}; return { display: ym, value: value }
-       // Wait, in server.js: const d = new Date(ym);
-       // So monthYear strings are parseable by Date constructor.
-       validMonths.forEach(m => {
-          const d = new Date(m);
-          if (d < oldestDate) oldestDate = d;
-       });
-    }
+    // Find all unique dates to know available range
+    const oldestRecord = await Attendance.findOne(query).sort({ date: 1 }).lean();
+    let oldestDate = oldestRecord && oldestRecord.date ? new Date(oldestRecord.date) : new Date();
 
     const now = new Date();
     let currentYear = now.getFullYear();
@@ -620,7 +644,6 @@ app.get('/api/attendance/available-months', async (req, res) => {
 
     const formattedMonths = [];
     
-    // Generate continuously from current month back to oldest month
     while (currentYear > oldestYear || (currentYear === oldestYear && currentMonth >= oldestMonth)) {
       const d = new Date(currentYear, currentMonth - 1, 1);
       const display = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
@@ -660,48 +683,34 @@ app.get('/api/admin/records/daily', async (req, res) => {
     } else if (startDate && endDate) {
       query.date = { $gte: startDate, $lte: endDate };
     } else if (monthYear) {
-      query.monthYear = monthYear;
-    } else {
-      // Prevent massive full-table scans if no date filter is provided
-      return res.status(400).json({ message: 'A date filter (date, startDate/endDate, or monthYear) is required.' });
+      const mFilter = buildMonthYearFilter(monthYear);
+      if (mFilter) Object.assign(query, mFilter);
     }
 
     if (employeeId) {
       query.employeeId = employeeId;
     }
     
-    // Pagination (default large so Excel gets all if not specified, or we can just paginate UI)
     const pg = parseInt(page) || 1;
     const lmt = parseInt(limit) || 10000;
     
-    // Execute query
     let records = await Attendance.find(query).populate('employeeId').select('-locationHistory -routeTracking').sort({ date: -1, checkIn: -1 }).lean();
     
-    // If searchName is provided, filter in memory since name is on populated Employee
     if (searchName) {
       const lowerSearch = searchName.toLowerCase();
       records = records.filter(r => r.employeeId && r.employeeId.name && r.employeeId.name.toLowerCase().includes(lowerSearch));
     }
 
-    // Apply pagination in memory if we had to filter by name, else we could do it in DB. For simplicity and robustness with name filter, do it here.
     const totalRecords = records.length;
     const paginatedRecords = records.slice((pg - 1) * lmt, pg * lmt);
 
-    // Format records
     const enrichedRecords = paginatedRecords.map(r => ({
       ...r,
       id: r._id.toString(),
-      employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
-      role: r.employeeId ? r.employeeId.role : 'Unknown',
-      employeeId: r.employeeId ? r.employeeId._id.toString() : null
-    })).filter(r => r.employeeName !== 'Unknown' && r.employeeId !== null);
-    
-    // For daily grouped view, it's often easier to return the raw list and group on frontend, 
-    // or just return the paginated enriched records. We'll return the list and frontend groups it by date if needed, 
-    // but the requirement says "Display a list of all attendance dates... When Admin opens a date, show Total, Present, Absent".
-    // We will just return all matching records and let frontend do the grouping if limit is high, OR we group it here.
-    // Given the prompt: "Filters should work before exporting Excel... Use server-side pagination if records are large."
-    // We will return `{ records: enrichedRecords, total: totalRecords }`
+      employeeName: (typeof r.employeeId === 'object' && r.employeeId?.name) ? r.employeeId.name : (r.employeeName || 'Unknown'),
+      role: (typeof r.employeeId === 'object' && r.employeeId?.role) ? r.employeeId.role : (r.role || 'Employee'),
+      employeeId: (typeof r.employeeId === 'object' && r.employeeId?._id) ? r.employeeId._id.toString() : (r.employeeId ? r.employeeId.toString() : r._id.toString())
+    }));
     
     res.json({ records: enrichedRecords, total: totalRecords });
   } catch (err) {
@@ -730,7 +739,8 @@ app.get('/api/admin/records/employee', async (req, res) => {
     if (startDate && endDate) {
       query.date = { $gte: startDate, $lte: endDate };
     } else if (monthYear) {
-      query.monthYear = monthYear;
+      const mFilter = buildMonthYearFilter(monthYear);
+      if (mFilter) Object.assign(query, mFilter);
     }
 
     const pg = parseInt(page) || 1;
@@ -748,10 +758,10 @@ app.get('/api/admin/records/employee', async (req, res) => {
     const enrichedRecords = records.map(r => ({
       ...r,
       id: r._id.toString(),
-      employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
-      role: r.employeeId ? r.employeeId.role : 'Unknown',
-      employeeId: r.employeeId ? r.employeeId._id.toString() : null
-    })).filter(r => r.employeeName !== 'Unknown' && r.employeeId !== null);
+      employeeName: (typeof r.employeeId === 'object' && r.employeeId?.name) ? r.employeeId.name : (r.employeeName || 'Unknown'),
+      role: (typeof r.employeeId === 'object' && r.employeeId?.role) ? r.employeeId.role : (r.role || 'Employee'),
+      employeeId: (typeof r.employeeId === 'object' && r.employeeId?._id) ? r.employeeId._id.toString() : (r.employeeId ? r.employeeId.toString() : r._id.toString())
+    }));
 
     res.json({ records: enrichedRecords, total: totalRecords });
   } catch (err) {
@@ -767,12 +777,12 @@ app.get('/api/attendance', async (req, res) => {
     let query = {};
     
     if (monthYear) {
-      query.monthYear = monthYear;
+      const mFilter = buildMonthYearFilter(monthYear);
+      if (mFilter) Object.assign(query, mFilter);
     } else if (date) {
-      if (date.length === 7) { // Fallback for old YYYY-MM
-        const [year, month] = date.split('-').map(Number);
-        const nextMonth = month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
-        query.date = { $gte: date, $lt: nextMonth };
+      if (date.length === 7) {
+        const mFilter = buildMonthYearFilter(date);
+        if (mFilter) Object.assign(query, mFilter);
       } else {
         query.date = date;
       }
@@ -780,24 +790,11 @@ app.get('/api/attendance', async (req, res) => {
     
     if (employeeId) query.employeeId = employeeId;
     
-    const twelveMonthsAgo = new Date();
-    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
-    const minDateStr = format(twelveMonthsAgo, 'yyyy-MM-dd');
-
-    if (!date && !monthYear && !employeeId) {
-      const thirtyDaysAgoStr = new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0];
-      query.date = { $gte: thirtyDaysAgoStr };
-    } else if (query.monthYear || query.date) {
-      // Allow specific queries to run without 12-month limit
-    } else {
-      query.date = { $gte: minDateStr };
-    }
-    
     let qBuilder = Attendance.find(query).populate('employeeId').select('-locationHistory -routeTracking').sort({ date: -1, checkIn: -1 });
     
     if (page || limit) {
       const pg = parseInt(page) || 1;
-      const lmt = parseInt(limit) || 20;
+      const lmt = parseInt(limit) || 10000;
       qBuilder = qBuilder.skip((pg - 1) * lmt).limit(lmt);
     }
     
@@ -806,10 +803,10 @@ app.get('/api/attendance', async (req, res) => {
     const enrichedRecords = records.map(r => ({
       ...r,
       id: r._id.toString(),
-      employeeName: r.employeeId ? r.employeeId.name : 'Unknown',
-      role: r.employeeId ? r.employeeId.role : 'Unknown',
-      employeeId: r.employeeId ? r.employeeId._id.toString() : null
-    })).filter(r => r.employeeName !== 'Unknown' && r.employeeId !== null);
+      employeeName: (typeof r.employeeId === 'object' && r.employeeId?.name) ? r.employeeId.name : (r.employeeName || 'Unknown'),
+      role: (typeof r.employeeId === 'object' && r.employeeId?.role) ? r.employeeId.role : (r.role || 'Employee'),
+      employeeId: (typeof r.employeeId === 'object' && r.employeeId?._id) ? r.employeeId._id.toString() : (r.employeeId ? r.employeeId.toString() : r._id.toString())
+    }));
     
     res.json(enrichedRecords);
   } catch (err) {
@@ -889,20 +886,15 @@ app.post('/api/attendance/check-in', async (req, res) => {
 
 app.post('/api/attendance/work-details', async (req, res) => {
   try {
-    const { employeeId, distanceTraveled, foodExpense, workDetails } = req.body;
+    const { employeeId, distanceTraveled, foodExpense, feedQuantity, workDetails } = req.body;
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
     
     const dist = Number(distanceTraveled) || 0;
     const food = Number(foodExpense) || 0;
+    const feedQty = Number(feedQuantity) || 0;
+    const feedAmt = feedQty * 5;
     const travelExp = dist * 2.5;
-    
-    const updateData = {
-      distanceTraveled: dist,
-      travelExpense: travelExp,
-      foodExpense: food,
-      workDetails: Array.isArray(workDetails) ? workDetails : []
-    };
     
     const record = await Attendance.findOne({ employeeId, date: today });
     
@@ -914,6 +906,8 @@ app.post('/api/attendance/work-details', async (req, res) => {
     record.distanceTraveled = dist;
     record.travelExpense = travelExp;
     record.foodExpense = food;
+    record.feedQuantity = feedQty;
+    record.feedAmount = feedAmt;
     record.workDetails = Array.isArray(workDetails) ? workDetails : [];
 
     for (let i = 1; i <= 10; i++) {
@@ -975,7 +969,7 @@ app.post('/api/attendance/live-location', async (req, res) => {
 
 app.post('/api/attendance/check-out', async (req, res) => {
   try {
-    const { employeeId, latitude, longitude, status, distanceTraveled, foodExpense, workDetails } = req.body;
+    const { employeeId, latitude, longitude, status, distanceTraveled, foodExpense, feedQuantity, workDetails } = req.body;
     const nowIST = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const today = format(nowIST, 'yyyy-MM-dd');
     const nowTime = format(nowIST, 'HH:mm:ss');
@@ -1007,6 +1001,11 @@ app.post('/api/attendance/check-out', async (req, res) => {
     }
     if (foodExpense !== undefined) {
       record.foodExpense = Number(foodExpense) || 0;
+    }
+    if (feedQuantity !== undefined) {
+      const feedQty = Number(feedQuantity) || 0;
+      record.feedQuantity = feedQty;
+      record.feedAmount = feedQty * 5;
     }
     
     if (req.body.workDetails !== undefined) {
@@ -1098,7 +1097,8 @@ app.get('/api/salary/:employeeId', async (req, res) => {
     const monthRecords = await Attendance.find({ 
       $or: [
         { employeeId: employeeId, date: { $gte: startOfMonthStr, $lte: endOfMonthStr } },
-        { employeeId: targetObjectId, date: { $gte: startOfMonthStr, $lte: endOfMonthStr } }
+        { employeeId: targetObjectId, date: { $gte: startOfMonthStr, $lte: endOfMonthStr } },
+        { employeeName: new RegExp(`^${emp.name.trim()}$`, 'i'), date: { $gte: startOfMonthStr, $lte: endOfMonthStr } }
       ]
     }).select('-locationHistory -routeTracking').lean();
     
@@ -1132,9 +1132,11 @@ app.get('/api/salary/:employeeId', async (req, res) => {
     
     let totalTravelExpense = 0;
     let totalFoodExpense = 0;
+    let totalFeedAmount = 0;
     monthRecords.forEach(r => {
       totalTravelExpense += (r.travelExpense || 0);
       totalFoodExpense += (r.foodExpense || 0);
+      totalFeedAmount += (r.feedAmount || 0);
     });
     
     const paidDays = Math.min(daysInMonth, totalDaysWorked + sundays);
@@ -1155,7 +1157,8 @@ app.get('/api/salary/:employeeId', async (req, res) => {
         monthlySalary,
         estimatedSalary,
         totalTravelExpense,
-        totalFoodExpense
+        totalFoodExpense,
+        totalFeedAmount
       },
       history
     });
@@ -1177,7 +1180,7 @@ app.post('/api/trigger-archive/:month', async (req, res) => {
 
 app.post('/api/salary/save', async (req, res) => {
   try {
-    const { employeeId, month, totalDays, monthlySalary, totalSalary, bonus = 0, deductions = 0, travelExpense = 0, foodExpense = 0 } = req.body;
+    const { employeeId, month, totalDays, monthlySalary, totalSalary, bonus = 0, deductions = 0, travelExpense = 0, foodExpense = 0, feedAmount = 0 } = req.body;
     
     const exists = await SalaryHistory.findOne({ employeeId, month });
     if (exists) {
@@ -1191,7 +1194,8 @@ app.post('/api/salary/save', async (req, res) => {
       deductions: Number(deductions),
       travelExpense: Number(travelExpense),
       foodExpense: Number(foodExpense),
-      netSalary: totalSalary + Number(bonus) - Number(deductions) + Number(travelExpense) + Number(foodExpense),
+      feedAmount: Number(feedAmount),
+      netSalary: totalSalary + Number(bonus) - Number(deductions) + Number(travelExpense) + Number(foodExpense) + Number(feedAmount),
       isPaid: false
     });
     
@@ -1207,7 +1211,7 @@ app.put('/api/salary/history/:id', async (req, res) => {
     if (!record) return res.status(404).json({ message: 'Salary record not found' });
     
     Object.assign(record, req.body);
-    record.netSalary = record.baseSalary + Number(record.bonus || 0) - Number(record.deductions || 0) + Number(record.travelExpense || 0) + Number(record.foodExpense || 0);
+    record.netSalary = record.baseSalary + Number(record.bonus || 0) - Number(record.deductions || 0) + Number(record.travelExpense || 0) + Number(record.foodExpense || 0) + Number(record.feedAmount || 0);
     await record.save();
     res.json(record);
   } catch (err) {
@@ -1244,6 +1248,7 @@ const generatePDFBuffer = (record, emp) => {
       doc.text(`Bonus (+): Rs. ${record.bonus || 0}`);
       doc.text(`Travel Expense (+): Rs. ${record.travelExpense || 0}`);
       doc.text(`Food Expense (+): Rs. ${record.foodExpense || 0}`);
+      doc.text(`Feed Amount (+): Rs. ${record.feedAmount || 0}`);
       doc.text(`Advance / Deductions (-): Rs. ${record.deductions || 0}`);
       doc.moveDown(2);
       

@@ -29,6 +29,8 @@ const attendanceSchema = new mongoose.Schema({
   distanceTraveled: { type: Number, default: 0 },
   travelExpense: { type: Number, default: 0 },
   foodExpense: { type: Number, default: 0 },
+  feedQuantity: { type: Number, default: 0 },
+  feedAmount: { type: Number, default: 0 },
   checkInLocationName: { type: String, default: '' },
   checkOutLocationName: { type: String, default: '' },
   workDetails: [{ type: String }],

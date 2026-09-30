@@ -29,10 +29,17 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-import { registerSW } from 'virtual:pwa-register';
-
-// Register PWA service worker
-registerSW({ immediate: true });
+if (import.meta.env.PROD) {
+  import('virtual:pwa-register').then(({ registerSW }) => {
+    registerSW({ immediate: true });
+  }).catch(e => console.error("SW Register Error:", e));
+} else if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(registrations => {
+    for (let registration of registrations) {
+      registration.unregister();
+    }
+  });
+}
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

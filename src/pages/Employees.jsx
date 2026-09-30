@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, memo, useMemo } from 'react';
 import axios from 'axios';
 import { Search, Plus, Edit2, Trash2, X, DollarSign } from 'lucide-react';
 import SalaryModal from '../components/SalaryModal';
@@ -42,16 +42,20 @@ const Employees = memo(function Employees({ employees: globalEmployees, refreshE
     }, 300);
   };
 
-  const filteredEmployees = employees.filter(emp => {
-    const searchLower = search.toLowerCase();
-    const name = (emp.name || '').toLowerCase();
-    const contact = (emp.contact || '').toLowerCase();
-    const role = (emp.role || '').toLowerCase();
-    
-    return name.includes(searchLower) || 
-           contact.includes(searchLower) || 
-           role.includes(searchLower);
-  });
+  const filteredEmployees = useMemo(() => {
+    return [...employees]
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
+      .filter(emp => {
+        const searchLower = search.toLowerCase();
+        const name = (emp.name || '').toLowerCase();
+        const contact = (emp.contact || '').toLowerCase();
+        const role = (emp.role || '').toLowerCase();
+        
+        return name.includes(searchLower) || 
+               contact.includes(searchLower) || 
+               role.includes(searchLower);
+      });
+  }, [employees, search]);
 
   const handleOpenModal = (employee = null) => {
     if (employee) {

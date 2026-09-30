@@ -10,6 +10,7 @@ const salaryHistorySchema = new mongoose.Schema({
   deductions: { type: Number, default: 0 },
   travelExpense: { type: Number, default: 0 },
   foodExpense: { type: Number, default: 0 },
+  feedAmount: { type: Number, default: 0 },
   netSalary: { type: Number, default: 0 },
   isPaid: { type: Boolean, default: false }
 }, { timestamps: true });

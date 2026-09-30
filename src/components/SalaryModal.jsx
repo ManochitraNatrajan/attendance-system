@@ -100,7 +100,8 @@ const SalaryModal = memo(function SalaryModal({ employee, onClose }) {
         bonus: Number(currentBonus) || 0,
         deductions: Number(currentAdvance) || 0,
         travelExpense: data.currentMonth.totalTravelExpense || 0,
-        foodExpense: data.currentMonth.totalFoodExpense || 0
+        foodExpense: data.currentMonth.totalFoodExpense || 0,
+        feedAmount: data.currentMonth.totalFeedAmount || 0
       });
       alert('Salary month saved to history!');
       setCurrentBonus('');
@@ -229,7 +230,7 @@ const SalaryModal = memo(function SalaryModal({ employee, onClose }) {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                     <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
                       <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Bonus (+)</span>
                       <div className="flex items-center text-green-600 font-black text-xl">
@@ -245,11 +246,15 @@ const SalaryModal = memo(function SalaryModal({ employee, onClose }) {
                     </div>
                     <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
                       <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Travel (+)</span>
-                      <div className="text-xl font-black text-gray-800">₹{data.currentMonth.totalTravelExpense}</div>
+                      <div className="text-xl font-black text-gray-800">₹{data.currentMonth.totalTravelExpense || 0}</div>
                     </div>
                     <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
                       <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Food (+)</span>
-                      <div className="text-xl font-black text-gray-800">₹{data.currentMonth.totalFoodExpense}</div>
+                      <div className="text-xl font-black text-gray-800">₹{data.currentMonth.totalFoodExpense || 0}</div>
+                    </div>
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Feed (+)</span>
+                      <div className="text-xl font-black text-gray-800">₹{data.currentMonth.totalFeedAmount || 0}</div>
                     </div>
                     <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center">
                       <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2">Advance / Deductions (-)</span>
@@ -264,10 +269,10 @@ const SalaryModal = memo(function SalaryModal({ employee, onClose }) {
                         />
                       </div>
                     </div>
-                    <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-4 rounded-2xl shadow-lg flex flex-col items-center justify-center text-center text-white">
+                    <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-4 rounded-2xl shadow-lg flex flex-col items-center justify-center text-center text-white col-span-2 sm:col-span-1">
                       <span className="text-[10px] text-white/70 font-bold uppercase tracking-widest mb-2">Total Net Pay</span>
                       <div className="text-xl font-black">
-                        ₹{Math.round((data.currentMonth.estimatedSalary || 0) + (Number(currentBonus) || 0) - (Number(currentAdvance) || 0) + (data.currentMonth.totalTravelExpense || 0) + (data.currentMonth.totalFoodExpense || 0)).toLocaleString()}
+                        ₹{Math.round((data.currentMonth.estimatedSalary || 0) + (Number(currentBonus) || 0) - (Number(currentAdvance) || 0) + (data.currentMonth.totalTravelExpense || 0) + (data.currentMonth.totalFoodExpense || 0) + (data.currentMonth.totalFeedAmount || 0)).toLocaleString()}
                       </div>
                     </div>
                   </div>
@@ -300,6 +305,7 @@ const SalaryModal = memo(function SalaryModal({ employee, onClose }) {
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Bonus</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Travel</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Food</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Feed</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Advance (-)</th>
                           <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Net Pay</th>
                           <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Status</th>
@@ -333,6 +339,9 @@ const SalaryModal = memo(function SalaryModal({ employee, onClose }) {
                               </td>
                               <td className="px-4 py-4 whitespace-nowrap text-sm text-right">
                                 <span className="text-green-600 font-medium">+₹{record.foodExpense?.toLocaleString() || 0}</span>
+                              </td>
+                              <td className="px-4 py-4 whitespace-nowrap text-sm text-right">
+                                <span className="text-green-600 font-medium">+₹{record.feedAmount?.toLocaleString() || 0}</span>
                               </td>
 
                               <td className="px-4 py-4 whitespace-nowrap text-sm text-right">
