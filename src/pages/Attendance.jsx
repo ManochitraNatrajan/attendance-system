@@ -4,6 +4,7 @@ import Skeleton from '../components/Skeleton';
 import { format } from 'date-fns';
 import { LogIn, LogOut, CheckCircle, Clock, MapPin, Search, X, Activity, ChevronDown, AlertTriangle } from 'lucide-react';
 import RouteTrackingModal from '../components/RouteTrackingModal';
+import EmployeeTripTracker from '../components/EmployeeTripTracker';
 import { LocationTracker } from '../services/LocationTracker';
 import { getSyncedTime } from '../utils/timeSync';
 
@@ -643,6 +644,9 @@ const Attendance = memo(function Attendance({ records: globalRecords, refreshRec
           )}
         </div>
       </div>
+
+      {/* Employee Trip Tracker Section (Claude's GPS Tracker & Route Analyzer) */}
+      <EmployeeTripTracker title="Employee Live Trip Tracker" />
 
       {todayRecord && (
         <div id="work-details-section" className="bg-white rounded-2xl shadow-sm border border-indigo-100 p-6 mb-8 relative transition-all hover:shadow-md">

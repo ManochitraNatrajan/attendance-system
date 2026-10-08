@@ -6,6 +6,7 @@ import 'leaflet/dist/leaflet.css';
 import { MapPin, Activity, X, Info, Navigation, Clock, ShieldCheck, Flag, History } from 'lucide-react';
 import Skeleton from './Skeleton';
 import { fetchRoadRoute } from '../services/googleRoutingService';
+import { splitRoute, detectIdle, cleanPoints } from '../utils/tripAnalyzer';
 
 // Map Component to handle bounds auto-fit
 function MapAutoBounds({ data }) {
